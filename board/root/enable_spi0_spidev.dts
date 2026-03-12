@@ -1,0 +1,19 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+  fragment@0 {
+    target-path = "/spi@ff500000";
+    __overlay__ { status = "okay"; };
+  };
+
+  fragment@1 {
+    target-path = "/spi@ff500000/spidev@0";
+    __overlay__ { status = "okay"; };
+  };
+
+  fragment@2 {
+    target-path = "/spi@ff500000/fbtft@0";
+    __overlay__ { status = "disabled"; };
+  };
+};

@@ -1,0 +1,20 @@
+# Build output
+lvgl_gui/build/
+lvgl_gui/lib/lvgl/
+*.o
+*.d
+*.elf
+luckfox_gui
+
+# Temp files
+*.swp
+*.swo
+*~
+.DS_Store
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+.idea/
+compile_commands.json

@@ -1,0 +1,19 @@
+serverAddr = "luckfoxpico1.aiserver.onmobilespace.com"
+serverPort = 7000
+
+auth.method = "token"
+auth.token = "Onm0bile"
+
+[[proxies]]
+name = "luckfox_api"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 8080
+remotePort = 8081
+
+[[proxies]]
+name = "luckfox_ssh"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 22
+remotePort = 8022
