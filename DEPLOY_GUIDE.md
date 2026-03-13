@@ -319,32 +319,36 @@ The socket file should exist once `luckfox_gui` is running.
 
 From any machine on the same network, send a test command (replace `<BOARD_IP>`):
 
-Switch to the status screen:
+Check status and IP:
 ```bash
-curl -X POST http://<BOARD_IP>:8080/display/screen \
-     -H "Content-Type: application/json" \
-     -d '{"screen": "status"}'
+curl http://<BOARD_IP>:8080/api/status
 ```
 
-Show a text message:
+Switch to the status screen:
 ```bash
-curl -X POST http://<BOARD_IP>:8080/display/text \
-     -H "Content-Type: application/json" \
-     -d '{"text": "Hello from API", "color": "00FF88", "size": 24}'
+curl http://<BOARD_IP>:8080/api/mode/status
 ```
 
 Show the eyes animation:
 ```bash
-curl -X POST http://<BOARD_IP>:8080/display/screen \
-     -H "Content-Type: application/json" \
-     -d '{"screen": "eyes"}'
+curl http://<BOARD_IP>:8080/api/mode/eyes
 ```
 
-Trigger an eye gaze:
+Show an emoji:
 ```bash
-curl -X POST http://<BOARD_IP>:8080/display/eyes/gaze \
+curl http://<BOARD_IP>:8080/api/emoji/happy
+```
+
+Show a text message:
+```bash
+curl -X POST http://<BOARD_IP>:8080/api/text \
      -H "Content-Type: application/json" \
-     -d '{"direction": "left"}'
+     -d '{"text": "Hello from API", "color": "#00FF88", "scale": 3}'
+```
+
+Send a GIF (from your local machine using the client tool):
+```bash
+python3 client/luckfox_client.py <BOARD_IP> gif assets/gifs/your.gif
 ```
 
 ---

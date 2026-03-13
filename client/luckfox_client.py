@@ -101,8 +101,9 @@ def optimize_gif_to_frames(input_file, target_size=240, max_frames=30, target_fp
                     r, g, b = frame.getpixel((x, y))
                     rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
                     idx = (y * target_size + x) * 2
-                    frame_buf[idx] = (rgb565 >> 8) & 0xFF
-                    frame_buf[idx+1] = rgb565 & 0xFF
+                    # Little-endian: low byte first (matches LVGL canvas format)
+                    frame_buf[idx]   = rgb565 & 0xFF
+                    frame_buf[idx+1] = (rgb565 >> 8) & 0xFF
 
             frames_rgb565.append(bytes(frame_buf))
             durations.append(frame_delay)

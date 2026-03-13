@@ -1,0 +1,1178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LuckFox Pico Max — GUI Mockup</title>
+<style>
+  :root {
+    --display-size: 480px;
+    --tile-area-h: 440px;
+    --dotbar-h: 40px;
+    --num-cards: 9;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #111;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    min-height: 100vh;
+    font-family: 'Courier New', Courier, monospace;
+    color: #ccc;
+    padding: 32px 16px 48px;
+    user-select: none;
+  }
+
+  h1 {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 13px;
+    font-weight: 400;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: #555;
+    margin-bottom: 18px;
+  }
+
+  /* ── Device frame ── */
+  .device-frame {
+    background: linear-gradient(160deg, #2a2a2e 0%, #1a1a1e 40%, #111114 100%);
+    border-radius: 28px;
+    padding: 28px 24px 20px;
+    box-shadow:
+      0 0 0 1px #333,
+      0 4px 40px rgba(0,0,0,0.8),
+      inset 0 1px 0 rgba(255,255,255,0.07);
+    position: relative;
+  }
+
+  .device-frame::before {
+    content: '';
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 48px;
+    height: 5px;
+    background: #222;
+    border-radius: 3px;
+  }
+
+  /* ── Display bezel ── */
+  .display-wrap {
+    position: relative;
+    width: var(--display-size);
+    height: var(--display-size);
+    border-radius: 12px;
+    overflow: hidden;
+    background: #000;
+    box-shadow:
+      0 0 0 2px #222,
+      inset 0 0 24px rgba(0,0,0,0.5);
+  }
+
+  /* Scanline overlay */
+  .display-wrap::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 3px,
+      rgba(0,0,0,0.08) 3px,
+      rgba(0,0,0,0.08) 4px
+    );
+    pointer-events: none;
+    z-index: 100;
+  }
+
+  /* ── Screen layers ── */
+  .screen {
+    position: absolute;
+    inset: 0;
+    width: var(--display-size);
+    height: var(--display-size);
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .screen.active { display: flex; }
+
+  /* ── HOME CAROUSEL ── */
+  #scr-home {
+    background: #0a0a0a;
+  }
+
+  .tile-viewport {
+    width: var(--display-size);
+    height: var(--tile-area-h);
+    overflow: hidden;
+    position: relative;
+  }
+
+  .tile-track {
+    display: flex;
+    flex-direction: row;
+    width: calc(var(--display-size) * var(--num-cards));
+    height: var(--tile-area-h);
+    transition: transform 250ms cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: transform;
+  }
+
+  .tile {
+    flex: 0 0 var(--display-size);
+    width: var(--display-size);
+    height: var(--tile-area-h);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+    cursor: pointer;
+  }
+
+  .tile.no-click { cursor: default; }
+
+  /* Per-tile tinted background */
+  .tile::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    opacity: 0.05;
+    background: var(--accent);
+  }
+
+  /* Data card badge */
+  .tile-badge {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--accent);
+    opacity: 0.8;
+  }
+
+  /* Accent circle */
+  .tile-circle {
+    width: 180px;
+    height: 180px;
+    border-radius: 50%;
+    background: var(--accent);
+    opacity: 0.2;
+    border: 2px solid var(--accent);
+    position: absolute;
+    top: 50px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 1;
+  }
+
+  .tile-circle-inner {
+    width: 180px;
+    height: 180px;
+    border-radius: 50%;
+    border: 2px solid var(--accent);
+    background: color-mix(in srgb, var(--accent) 20%, transparent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 56px;
+    line-height: 1;
+  }
+
+  .tile-title {
+    position: absolute;
+    top: 254px; /* 50 + 180 + 24 */
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 36px;
+    font-weight: 700;
+    color: #fff;
+    text-align: center;
+    width: 100%;
+  }
+
+  .tile-sub {
+    position: absolute;
+    top: 304px; /* 254 + 36 + 14 gap ~ approximate */
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 18px;
+    color: #888;
+    text-align: center;
+    width: 100%;
+  }
+
+  /* ── Weather extras ── */
+  .weather-data {
+    position: absolute;
+    top: 334px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .weather-temp {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 48px;
+    font-weight: 700;
+    color: #FF8C00;
+    line-height: 1;
+  }
+  .weather-desc {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 22px;
+    color: #fff;
+  }
+  .weather-loc {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 16px;
+    color: #666;
+  }
+
+  /* ── Ethereum extras ── */
+  .eth-data {
+    position: absolute;
+    top: 330px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .eth-price {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 40px;
+    font-weight: 700;
+    color: #9945FF;
+    line-height: 1;
+  }
+  .eth-change {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 20px;
+    color: #00CC66;
+  }
+  .eth-spark {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    margin-top: 6px;
+  }
+  .eth-spark span {
+    width: 40px;
+    background: rgba(153, 69, 255, 0.4);
+    border-radius: 3px 3px 0 0;
+  }
+
+  /* ── OpenClaw extras ── */
+  .claw-data {
+    position: absolute;
+    top: 330px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+  .claw-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 18px;
+    color: #00CC66;
+  }
+  .claw-dot {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #00CC66;
+    animation: pulse-green 1.8s ease-in-out infinite;
+  }
+  @keyframes pulse-green {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(0,204,102,0.6); }
+    50% { box-shadow: 0 0 0 8px rgba(0,204,102,0); }
+  }
+  .claw-sync {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 14px;
+    color: #555;
+  }
+  .claw-ver {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 12px;
+    color: #444;
+  }
+
+  /* ── Server extras ── */
+  .srv-data {
+    position: absolute;
+    top: 326px;
+    width: 80%;
+    left: 10%;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .srv-row {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .srv-label {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 13px;
+    color: #888;
+  }
+  .srv-bar-bg {
+    width: 100%;
+    height: 12px;
+    background: #1a1a1a;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .srv-bar-fill {
+    height: 100%;
+    border-radius: 6px;
+    transition: width 1s ease;
+  }
+  .srv-api {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 16px;
+    color: #00CC66;
+    text-align: center;
+    margin-top: 4px;
+  }
+
+  /* ── Dot bar ── */
+  .dot-bar {
+    width: var(--display-size);
+    height: var(--dotbar-h);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    position: relative;
+    background: #0a0a0a;
+    border-top: 1px solid #1a1a1a;
+    flex-shrink: 0;
+  }
+
+  .dot-nav {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #333;
+    transition: background 200ms, transform 200ms;
+    cursor: pointer;
+  }
+  .dot.active {
+    background: #fff;
+    transform: scale(1.2);
+  }
+
+  .nav-arrow {
+    font-size: 16px;
+    color: #333;
+    cursor: pointer;
+    padding: 0 6px;
+    line-height: 1;
+    transition: color 150ms;
+  }
+  .nav-arrow:hover { color: #888; }
+
+  .play-btn {
+    position: absolute;
+    right: 12px;
+    font-size: 14px;
+    color: #444;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: color 150ms, background 150ms;
+    line-height: 1;
+  }
+  .play-btn:hover { color: #aaa; background: #1a1a1a; }
+  .play-btn.playing { color: #00CCFF; }
+
+  /* Progress bar */
+  .progress-bar {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 2px;
+    width: 0%;
+    background: var(--accent, #00CCFF);
+    transition: none;
+  }
+
+  /* ── EYES SCREEN ── */
+  #scr-eyes {
+    background: #0a0a0a;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .eyes-container {
+    display: flex;
+    gap: 40px;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .eye-outer {
+    width: 150px;
+    height: 150px;
+    border-radius: 50%;
+    background: #e8e8e8;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    position: relative;
+    box-shadow: 0 0 20px rgba(255,255,255,0.1);
+  }
+
+  .eye-iris {
+    width: 70px;
+    height: 70px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, #5588aa, #223344);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    transition: transform 400ms ease-in-out;
+  }
+
+  .eye-pupil {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: #000;
+    position: relative;
+  }
+
+  .eye-highlight {
+    position: absolute;
+    top: 5px;
+    right: 6px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.9);
+  }
+
+  .eye-lid {
+    position: absolute;
+    top: -100%;
+    left: 0;
+    right: 0;
+    height: 100%;
+    background: #0a0a0a;
+    border-radius: 0 0 50% 50%;
+    transition: top 120ms ease-in;
+    z-index: 10;
+  }
+
+  /* ── STATUS SCREEN ── */
+  #scr-status {
+    background: #0a0a0a;
+    padding: 40px 32px;
+    gap: 0;
+  }
+
+  .status-title {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 34px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 8px;
+  }
+
+  .status-ip {
+    font-family: 'Courier New', monospace;
+    font-size: 18px;
+    color: #00CCFF;
+    margin-bottom: 28px;
+  }
+
+  .stat-bar-wrap {
+    margin-bottom: 18px;
+  }
+
+  .stat-bar-label {
+    display: flex;
+    justify-content: space-between;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 14px;
+    color: #888;
+    margin-bottom: 6px;
+  }
+
+  .stat-bar-bg {
+    width: 100%;
+    height: 16px;
+    background: #1a1a1a;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .stat-bar-fill {
+    height: 100%;
+    border-radius: 8px;
+  }
+
+  .status-uptime {
+    margin-top: 24px;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    color: #444;
+    letter-spacing: 1px;
+  }
+
+  /* ── TEXT SCREEN ── */
+  #scr-text {
+    background: #0a0a0a;
+    justify-content: center;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .text-message {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 32px;
+    font-weight: 700;
+    color: #00CCFF;
+    text-align: center;
+    padding: 0 24px;
+    line-height: 1.3;
+  }
+
+  .text-cursor {
+    display: inline-block;
+    width: 3px;
+    height: 36px;
+    background: #00CCFF;
+    vertical-align: middle;
+    margin-left: 4px;
+    animation: blink 1s step-end infinite;
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+
+  .text-sub {
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    color: #444;
+    text-align: center;
+  }
+
+  /* ── EMOJI SCREEN ── */
+  #scr-emoji {
+    background: #0a0a0a;
+    justify-content: center;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .emoji-big {
+    font-size: 96px;
+    line-height: 1;
+  }
+
+  .emoji-label {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 22px;
+    color: #888;
+  }
+
+  /* ── IMAGE SCREEN ── */
+  #scr-image {
+    background: #0a0a0a;
+    justify-content: center;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .image-placeholder {
+    width: 240px;
+    height: 240px;
+    border-radius: 8px;
+    animation: gradient-shift 3s ease infinite;
+    background-size: 200% 200%;
+  }
+
+  @keyframes gradient-shift {
+    0%   { background: linear-gradient(135deg, #FF4080, #9945FF); }
+    25%  { background: linear-gradient(135deg, #9945FF, #00CCFF); }
+    50%  { background: linear-gradient(135deg, #00CCFF, #00CC80); }
+    75%  { background: linear-gradient(135deg, #00CC80, #FF8C00); }
+    100% { background: linear-gradient(135deg, #FF8C00, #FF4080); }
+  }
+
+  .image-label {
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    color: #555;
+  }
+
+  /* ── BACK BUTTON (sub-screens) ── */
+  .back-btn {
+    position: absolute;
+    top: 14px;
+    left: 14px;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 14px;
+    color: #555;
+    cursor: pointer;
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid #222;
+    background: rgba(0,0,0,0.4);
+    transition: color 150ms, border-color 150ms;
+    z-index: 50;
+    line-height: 1.4;
+  }
+  .back-btn:hover { color: #ccc; border-color: #444; }
+
+  /* ── Keyboard hint ── */
+  .kbd-hint {
+    margin-top: 16px;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 11px;
+    color: #333;
+    text-align: center;
+    letter-spacing: 1px;
+  }
+  .kbd-hint kbd {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 3px;
+    padding: 1px 5px;
+    color: #555;
+    font-family: inherit;
+  }
+</style>
+</head>
+<body>
+
+<h1>LuckFox Pico Max · 240×240 Display Mockup (2×)</h1>
+
+<div class="device-frame">
+  <div class="display-wrap">
+
+    <!-- ═══════════════════════════════════════ HOME CAROUSEL -->
+    <div class="screen active" id="scr-home">
+      <div class="tile-viewport">
+        <div class="tile-track" id="tile-track">
+
+          <!-- Card 1: Eyes -->
+          <div class="tile" style="--accent:#00CCFF" data-target="eyes">
+            <div style="position:absolute;top:50px;left:50%;transform:translateX(-50%)">
+              <div class="tile-circle-inner">👁</div>
+            </div>
+            <div class="tile-title">Eyes</div>
+            <div class="tile-sub">Animated face</div>
+          </div>
+
+          <!-- Card 2: Status -->
+          <div class="tile" style="--accent:#4488FF" data-target="status">
+            <div style="position:absolute;top:50px;left:50%;transform:translateX(-50%)">
+              <div class="tile-circle-inner">🖥</div>
+            </div>
+            <div class="tile-title">Status</div>
+            <div class="tile-sub">System info</div>
+          </div>
+
+          <!-- Card 3: Weather (data card) -->
+          <div class="tile no-click" style="--accent:#FF8C00">
+            <div class="tile-badge"></div>
+            <div style="position:absolute;top:50px;left:50%;transform:translateX(-50%)">
+              <div class="tile-circle-inner">☀</div>
+            </div>
+            <div class="tile-title">Weather</div>
+            <div class="weather-data">
+              <div class="weather-temp">22°C</div>
+              <div class="weather-desc">Sunny ☀</div>
+              <div class="weather-loc">San José, CR</div>
+            </div>
+          </div>
+
+          <!-- Card 4: Ethereum (data card) -->
+          <div class="tile no-click" style="--accent:#9945FF">
+            <div class="tile-badge"></div>
+            <div style="position:absolute;top:50px;left:50%;transform:translateX(-50%)">
+              <div class="tile-circle-inner">⟠</div>
+            </div>
+            <div class="tile-title">Ethereum</div>
+            <div class="eth-data">
+              <div class="eth-price">$3,421.50</div>
+              <div class="eth-change">+2.4% ▲</div>
+              <div class="eth-spark">
+                <span style="height:30px"></span>
+                <span style="height:50px"></span>
+                <span style="height:35px"></span>
+                <span style="height:65px"></span>
+                <span style="height:55px"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 5: OpenClaw (data card) -->
+          <div class="tile no-click" style="--accent:#FF4080">
+            <div class="tile-badge"></div>
+            <div style="position:absolute;top:50px;left:50%;transform:translateX(-50%)">
+              <div class="tile-circle-inner">🦀</div>
+            </div>
+            <div class="tile-title">OpenClaw</div>
+            <div class="tile-sub" style="top:304px">AI Agent · Online</div>
+            <div class="claw-data">
+              <div class="claw-status">
+                <div class="claw-dot"></div>
+                Online
+              </div>
+              <div class="claw-sync">Last sync: 2s ago</div>
+              <div class="claw-ver">v2.1.4</div>
+            </div>
+          </div>
+
+          <!-- Card 6: Server (data card) -->
+          <div class="tile no-click" style="--accent:#00CC80">
+            <div class="tile-badge"></div>
+            <div style="position:absolute;top:50px;left:50%;transform:translateX(-50%)">
+              <div class="tile-circle-inner">⚙</div>
+            </div>
+            <div class="tile-title">Server</div>
+            <div class="srv-data">
+              <div class="srv-row">
+                <div class="srv-label">CPU <span style="float:right;color:#ccc">23%</span></div>
+                <div class="srv-bar-bg">
+                  <div class="srv-bar-fill" style="width:23%;background:linear-gradient(90deg,#00aa55,#00CC80)"></div>
+                </div>
+              </div>
+              <div class="srv-row">
+                <div class="srv-label">RAM <span style="float:right;color:#ccc">41%</span></div>
+                <div class="srv-bar-bg">
+                  <div class="srv-bar-fill" style="width:41%;background:linear-gradient(90deg,#2255aa,#4488FF)"></div>
+                </div>
+              </div>
+              <div class="srv-api">API ✓ Online</div>
+            </div>
+          </div>
+
+          <!-- Card 7: Emoji -->
+          <div class="tile" style="--accent:#FFCC00" data-target="emoji">
+            <div style="position:absolute;top:50px;left:50%;transform:translateX(-50%)">
+              <div class="tile-circle-inner">😊</div>
+            </div>
+            <div class="tile-title">Emoji</div>
+            <div class="tile-sub">Quick icons</div>
+          </div>
+
+          <!-- Card 8: Text -->
+          <div class="tile" style="--accent:#00CC80" data-target="text">
+            <div style="position:absolute;top:50px;left:50%;transform:translateX(-50%)">
+              <div class="tile-circle-inner">✏</div>
+            </div>
+            <div class="tile-title">Text</div>
+            <div class="tile-sub">Show message</div>
+          </div>
+
+          <!-- Card 9: Image -->
+          <div class="tile" style="--accent:#FF4080" data-target="image">
+            <div style="position:absolute;top:50px;left:50%;transform:translateX(-50%)">
+              <div class="tile-circle-inner">🖼</div>
+            </div>
+            <div class="tile-title">Image</div>
+            <div class="tile-sub">Display picture</div>
+          </div>
+
+        </div><!-- /tile-track -->
+      </div><!-- /tile-viewport -->
+
+      <!-- Dot bar -->
+      <div class="dot-bar" id="dot-bar">
+        <span class="nav-arrow" id="arrow-left">&#8249;</span>
+        <div class="dot-nav" id="dot-nav"></div>
+        <span class="nav-arrow" id="arrow-right">&#8250;</span>
+        <div class="play-btn" id="play-btn" title="SPACE to toggle">&#9654;</div>
+        <div class="progress-bar" id="progress-bar"></div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════ EYES SCREEN -->
+    <div class="screen" id="scr-eyes">
+      <div class="back-btn" id="back-eyes">&#8592; Back</div>
+      <div class="eyes-container">
+        <div class="eye-outer" id="eye-left">
+          <div class="eye-iris" id="iris-left">
+            <div class="eye-pupil">
+              <div class="eye-highlight"></div>
+            </div>
+          </div>
+          <div class="eye-lid" id="lid-left"></div>
+        </div>
+        <div class="eye-outer" id="eye-right">
+          <div class="eye-iris" id="iris-right">
+            <div class="eye-pupil">
+              <div class="eye-highlight"></div>
+            </div>
+          </div>
+          <div class="eye-lid" id="lid-right"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════ STATUS SCREEN -->
+    <div class="screen" id="scr-status">
+      <div class="back-btn" id="back-status">&#8592; Back</div>
+      <div class="status-title">LuckFox Agent</div>
+      <div class="status-ip">IP: 192.168.1.60</div>
+
+      <div class="stat-bar-wrap">
+        <div class="stat-bar-label">
+          <span>CPU</span><span style="color:#00CC80">35%</span>
+        </div>
+        <div class="stat-bar-bg">
+          <div class="stat-bar-fill" style="width:35%;background:linear-gradient(90deg,#00aa55,#00FF88)"></div>
+        </div>
+      </div>
+
+      <div class="stat-bar-wrap">
+        <div class="stat-bar-label">
+          <span>MEM</span><span style="color:#4488FF">60%</span>
+        </div>
+        <div class="stat-bar-bg">
+          <div class="stat-bar-fill" style="width:60%;background:linear-gradient(90deg,#2255aa,#4488FF)"></div>
+        </div>
+      </div>
+
+      <div class="stat-bar-wrap">
+        <div class="stat-bar-label">
+          <span>TEMP</span><span style="color:#FF8C00">48%</span>
+        </div>
+        <div class="stat-bar-bg">
+          <div class="stat-bar-fill" style="width:48%;background:linear-gradient(90deg,#cc5500,#FF8C00)"></div>
+        </div>
+      </div>
+
+      <div class="status-uptime">UPTIME: 3d 7h 42m</div>
+    </div>
+
+    <!-- ═══════════════════════════════════════ TEXT SCREEN -->
+    <div class="screen" id="scr-text">
+      <div class="back-btn" id="back-text">&#8592; Back</div>
+      <div class="text-message">
+        Hello from LuckFox!<span class="text-cursor"></span>
+      </div>
+      <div class="text-sub">POST /api/text to change</div>
+    </div>
+
+    <!-- ═══════════════════════════════════════ EMOJI SCREEN -->
+    <div class="screen" id="scr-emoji">
+      <div class="back-btn" id="back-emoji">&#8592; Back</div>
+      <div class="emoji-big">😊</div>
+      <div class="emoji-label">Emoji Screen</div>
+    </div>
+
+    <!-- ═══════════════════════════════════════ IMAGE SCREEN -->
+    <div class="screen" id="scr-image">
+      <div class="back-btn" id="back-image">&#8592; Back</div>
+      <div class="image-placeholder"></div>
+      <div class="image-label">240×240 · RGB565</div>
+    </div>
+
+  </div><!-- /display-wrap -->
+</div><!-- /device-frame -->
+
+<div class="kbd-hint">
+  <kbd>←</kbd> <kbd>→</kbd> navigate &nbsp;·&nbsp;
+  <kbd>Space</kbd> auto-play &nbsp;·&nbsp;
+  <kbd>1</kbd>–<kbd>9</kbd> jump &nbsp;·&nbsp;
+  <kbd>Enter</kbd> open &nbsp;·&nbsp;
+  <kbd>Esc</kbd> back
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────
+//  Constants
+// ─────────────────────────────────────────────────────────
+const NUM_CARDS = 9;
+const TILE_W    = 480;      // 2× scale
+const AUTO_MS   = 4000;     // 4s per card
+
+// Cards that launch a sub-screen
+const CARD_TARGETS = {
+  0: 'eyes',
+  1: 'status',
+  6: 'emoji',
+  7: 'text',
+  8: 'image'
+};
+
+// Accent colors per card (for progress bar)
+const CARD_ACCENTS = [
+  '#00CCFF','#4488FF','#FF8C00','#9945FF',
+  '#FF4080','#00CC80','#FFCC00','#00CC80','#FF4080'
+];
+
+// ─────────────────────────────────────────────────────────
+//  State
+// ─────────────────────────────────────────────────────────
+let currentCard  = 0;
+let currentScreen = 'home';   // 'home' | 'eyes' | 'status' | 'text' | 'emoji' | 'image'
+let isPlaying    = false;
+let autoTimer    = null;
+let progressAnim = null;
+let progressStart = null;
+
+// ─────────────────────────────────────────────────────────
+//  DOM refs
+// ─────────────────────────────────────────────────────────
+const track      = document.getElementById('tile-track');
+const dotNav     = document.getElementById('dot-nav');
+const playBtn    = document.getElementById('play-btn');
+const progressBar = document.getElementById('progress-bar');
+const tiles      = document.querySelectorAll('.tile');
+
+// ─────────────────────────────────────────────────────────
+//  Build dots
+// ─────────────────────────────────────────────────────────
+for (let i = 0; i < NUM_CARDS; i++) {
+  const d = document.createElement('div');
+  d.className = 'dot' + (i === 0 ? ' active' : '');
+  d.addEventListener('click', () => { goToTile(i); pauseAuto(); });
+  dotNav.appendChild(d);
+}
+
+function getDots() {
+  return dotNav.querySelectorAll('.dot');
+}
+
+// ─────────────────────────────────────────────────────────
+//  Navigation
+// ─────────────────────────────────────────────────────────
+function goToTile(idx) {
+  if (idx < 0) idx = NUM_CARDS - 1;
+  if (idx >= NUM_CARDS) idx = 0;
+  currentCard = idx;
+
+  track.style.transform = 'translateX(' + (-idx * TILE_W) + 'px)';
+
+  const dots = getDots();
+  dots.forEach((d, i) => {
+    d.classList.toggle('active', i === idx);
+  });
+
+  // Update progress bar accent color
+  progressBar.style.background = CARD_ACCENTS[idx];
+}
+
+function nextCard() {
+  goToTile((currentCard + 1) % NUM_CARDS);
+}
+
+function prevCard() {
+  goToTile((currentCard - 1 + NUM_CARDS) % NUM_CARDS);
+}
+
+// ─────────────────────────────────────────────────────────
+//  Auto-play
+// ─────────────────────────────────────────────────────────
+function startProgress() {
+  stopProgress();
+  progressBar.style.transition = 'none';
+  progressBar.style.width = '0%';
+
+  // Force reflow so the transition fires properly
+  void progressBar.offsetWidth;
+
+  progressBar.style.transition = 'width ' + AUTO_MS + 'ms linear';
+  progressBar.style.width = '100%';
+}
+
+function stopProgress() {
+  progressBar.style.transition = 'none';
+  progressBar.style.width = '0%';
+}
+
+function startAuto() {
+  isPlaying = true;
+  playBtn.textContent = '⏸';
+  playBtn.classList.add('playing');
+  startProgress();
+
+  autoTimer = setInterval(() => {
+    nextCard();
+    startProgress();
+  }, AUTO_MS);
+}
+
+function pauseAuto() {
+  isPlaying = false;
+  playBtn.textContent = '▶';
+  playBtn.classList.remove('playing');
+  stopProgress();
+  clearInterval(autoTimer);
+  autoTimer = null;
+}
+
+function toggleAuto() {
+  if (isPlaying) pauseAuto(); else startAuto();
+}
+
+// ─────────────────────────────────────────────────────────
+//  Screen switching
+// ─────────────────────────────────────────────────────────
+function showScreen(name) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById('scr-' + name).classList.add('active');
+  currentScreen = name;
+  if (name === 'eyes') startEyeAnimation();
+  else stopEyeAnimation();
+}
+
+function goHome() {
+  showScreen('home');
+  stopEyeAnimation();
+}
+
+function openCard(idx) {
+  const target = CARD_TARGETS[idx];
+  if (target) {
+    pauseAuto();
+    showScreen(target);
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+//  Click handlers
+// ─────────────────────────────────────────────────────────
+tiles.forEach((tile, i) => {
+  tile.addEventListener('click', () => {
+    if (tile.classList.contains('no-click')) return;
+    openCard(i);
+  });
+});
+
+document.getElementById('arrow-left').addEventListener('click', () => {
+  prevCard(); pauseAuto();
+});
+document.getElementById('arrow-right').addEventListener('click', () => {
+  nextCard(); pauseAuto();
+});
+playBtn.addEventListener('click', toggleAuto);
+
+['eyes','status','text','emoji','image'].forEach(name => {
+  document.getElementById('back-' + name).addEventListener('click', goHome);
+});
+
+// ─────────────────────────────────────────────────────────
+//  Keyboard
+// ─────────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  if (currentScreen === 'home') {
+    switch (e.key) {
+      case 'ArrowLeft':
+        prevCard(); pauseAuto(); break;
+      case 'ArrowRight':
+        nextCard(); pauseAuto(); break;
+      case ' ':
+        e.preventDefault(); toggleAuto(); break;
+      case 'Enter':
+        openCard(currentCard); break;
+      default:
+        if (e.key >= '1' && e.key <= '9') {
+          goToTile(parseInt(e.key) - 1);
+          pauseAuto();
+        }
+    }
+  } else {
+    if (e.key === 'Escape' || e.key === 'Backspace') goHome();
+  }
+});
+
+// ─────────────────────────────────────────────────────────
+//  Eyes animation
+// ─────────────────────────────────────────────────────────
+let eyeAnimFrame = null;
+let eyeBlinkTimer = null;
+let eyeGazeTimer = null;
+
+// Gaze sequence: [x, y] offsets in px (max ~30px from center)
+const GAZE_SEQUENCE = [
+  [0, 0], [-25, -10], [0, 0], [25, -10],
+  [0, 0], [0, 20],   [0, 0], [-20, 15],
+  [0, 0], [20, -15], [0, 0]
+];
+let gazeIdx = 0;
+
+function setGaze(x, y) {
+  const irisL = document.getElementById('iris-left');
+  const irisR = document.getElementById('iris-right');
+  if (irisL) irisL.style.transform = 'translate(' + x + 'px,' + y + 'px)';
+  if (irisR) irisR.style.transform = 'translate(' + x + 'px,' + y + 'px)';
+}
+
+function blink() {
+  const lidL = document.getElementById('lid-left');
+  const lidR = document.getElementById('lid-right');
+  if (!lidL || !lidR) return;
+  lidL.style.top = '0';
+  lidR.style.top = '0';
+  setTimeout(() => {
+    lidL.style.top = '-100%';
+    lidR.style.top = '-100%';
+  }, 140);
+}
+
+function startEyeAnimation() {
+  gazeIdx = 0;
+
+  function animateGaze() {
+    const [x, y] = GAZE_SEQUENCE[gazeIdx % GAZE_SEQUENCE.length];
+    setGaze(x, y);
+    gazeIdx++;
+    eyeGazeTimer = setTimeout(animateGaze, 1200);
+  }
+  animateGaze();
+
+  function scheduleBlink() {
+    blink();
+    eyeBlinkTimer = setTimeout(scheduleBlink, 3800 + Math.random() * 1200);
+  }
+  eyeBlinkTimer = setTimeout(scheduleBlink, 1000);
+}
+
+function stopEyeAnimation() {
+  clearTimeout(eyeGazeTimer);
+  clearTimeout(eyeBlinkTimer);
+  eyeGazeTimer = null;
+  eyeBlinkTimer = null;
+  setGaze(0, 0);
+}
+
+// ─────────────────────────────────────────────────────────
+//  Init
+// ─────────────────────────────────────────────────────────
+goToTile(0);
+</script>
+</body>
+</html>

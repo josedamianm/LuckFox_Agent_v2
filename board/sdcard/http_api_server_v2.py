@@ -6,6 +6,7 @@ import signal
 import sys
 import subprocess
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
 from gui_client import GUIClient
 
 try:
@@ -69,23 +70,30 @@ class APIHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _parse_dir(self):
+        """Return dir= query param if provided, else omit (C binary auto-detects)."""
+        qs = parse_qs(urlparse(self.path).query)
+        d = qs.get('dir', [None])[0]
+        return {'dir': d} if d in ('left', 'right', 'fade') else {}
+
     def do_GET(self):
-        path = self.path.rstrip('/')
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip('/')
 
         if path == '/api/status':
             self._json(200, {'ip': get_ipv4(IFACE), 'has_audio': HAS_AUDIO})
 
         elif path == '/api/mode/status':
-            gui.switch_screen("status")
+            gui.switch_screen("status", **self._parse_dir())
             self._json(200, {'mode': 'status'})
 
         elif path == '/api/mode/eyes':
-            gui.switch_screen("eyes")
+            gui.switch_screen("eyes", **self._parse_dir())
             self._json(200, {'mode': 'eyes'})
 
         elif path.startswith('/api/emoji/'):
             name = path.split('/')[-1]
-            gui.switch_screen("emoji", emoji=name)
+            gui.switch_screen("emoji", emoji=name, **self._parse_dir())
             self._json(200, {'mode': 'emoji', 'emoji': name})
 
         elif path == '/api/capture':
@@ -118,7 +126,7 @@ class APIHandler(BaseHTTPRequestHandler):
             self._json(404, {'error': 'Not found'})
 
     def do_POST(self):
-        path = self.path.rstrip('/')
+        path = urlparse(self.path).path.rstrip('/')
         length = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(length) if length > 0 else b''
 
@@ -128,7 +136,10 @@ class APIHandler(BaseHTTPRequestHandler):
                 text = data.get('text', '')
                 color = data.get('color', '#FFFFFF')
                 scale = int(data.get('scale', 3))
-                gui.switch_screen("text", text=text, color=color, scale=scale)
+                extras = {}
+                if data.get('dir') in ('left', 'right', 'fade'):
+                    extras['dir'] = data['dir']
+                gui.switch_screen("text", text=text, color=color, scale=scale, **extras)
                 self._json(200, {'mode': 'text', 'text': text})
             except Exception as e:
                 self._json(400, {'error': str(e)})

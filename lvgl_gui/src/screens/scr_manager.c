@@ -23,8 +23,23 @@ void scr_manager_init(void) {
     scr_menu_create();
 }
 
-void scr_manager_switch(scr_id_t id) {
+void scr_manager_switch_dir(scr_id_t id, scr_dir_t dir) {
     if (id >= SCR_COUNT) return;
+
+    lv_scr_load_anim_t anim;
+    if (id == current_scr) {
+        anim = LV_SCR_LOAD_ANIM_NONE;
+    } else if (dir == SCR_DIR_LEFT) {
+        anim = LV_SCR_LOAD_ANIM_MOVE_LEFT;
+    } else if (dir == SCR_DIR_RIGHT) {
+        anim = LV_SCR_LOAD_ANIM_MOVE_RIGHT;
+    } else if (dir == SCR_DIR_FADE) {
+        anim = LV_SCR_LOAD_ANIM_FADE_IN;
+    } else {
+        /* SCR_DIR_AUTO: higher index → slide left (forward), lower → slide right (back) */
+        anim = (id > current_scr) ? LV_SCR_LOAD_ANIM_MOVE_LEFT : LV_SCR_LOAD_ANIM_MOVE_RIGHT;
+    }
+
     current_scr = id;
 
     lv_obj_t *scr = NULL;
@@ -37,7 +52,11 @@ void scr_manager_switch(scr_id_t id) {
         case SCR_MENU:   scr = scr_menu_get();   break;
         default: return;
     }
-    if (scr) lv_screen_load_anim(scr, LV_SCR_LOAD_ANIM_FADE_IN, 200, 0, false);
+    if (scr) lv_screen_load_anim(scr, anim, 250, 0, false);
+}
+
+void scr_manager_switch(scr_id_t id) {
+    scr_manager_switch_dir(id, SCR_DIR_AUTO);
 }
 
 scr_id_t scr_manager_current(void) {
@@ -58,4 +77,12 @@ void scr_manager_set_emoji(const char *name) {
 
 void scr_manager_set_image(const char *path) {
     scr_image_set(path);
+}
+
+void scr_manager_gif_start(int frame_count) {
+    scr_image_gif_start(frame_count);
+}
+
+void scr_manager_gif_frame(int idx, const char *path, int duration_ms) {
+    scr_image_gif_frame(idx, path, duration_ms);
 }
