@@ -8,6 +8,7 @@ typedef enum {
     SCR_TEXT,
     SCR_IMAGE,
     SCR_MENU,
+    SCR_CHAT,
     SCR_COUNT
 } scr_id_t;
 
@@ -29,5 +30,7 @@ void scr_manager_set_emoji(const char *name);
 void scr_manager_set_image(const char *path);
 void scr_manager_gif_start(int frame_count);
 void scr_manager_gif_frame(int idx, const char *path, int duration_ms);
+void scr_manager_set_chat_state(int state);
+void scr_manager_set_chat_text(const char *text);
 
 #endif

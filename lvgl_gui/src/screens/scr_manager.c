@@ -5,13 +5,14 @@
 #include "scr_text.h"
 #include "scr_image.h"
 #include "scr_menu.h"
+#include "scr_chat.h"
 #include "lvgl.h"
 #include <string.h>
 
 static scr_id_t current_scr = SCR_STATUS;
 
 static const char *scr_names[SCR_COUNT] = {
-    "status", "eyes", "emoji", "text", "image", "menu"
+    "status", "eyes", "emoji", "text", "image", "menu", "chat"
 };
 
 void scr_manager_init(void) {
@@ -21,6 +22,7 @@ void scr_manager_init(void) {
     scr_text_create();
     scr_image_create();
     scr_menu_create();
+    scr_chat_create();
 }
 
 void scr_manager_switch_dir(scr_id_t id, scr_dir_t dir) {
@@ -50,6 +52,7 @@ void scr_manager_switch_dir(scr_id_t id, scr_dir_t dir) {
         case SCR_TEXT:   scr = scr_text_get();   break;
         case SCR_IMAGE:  scr = scr_image_get();  break;
         case SCR_MENU:   scr = scr_menu_get();   break;
+        case SCR_CHAT:   scr = scr_chat_get();   break;
         default: return;
     }
     if (scr) lv_screen_load_anim(scr, anim, 250, 0, false);
@@ -85,4 +88,12 @@ void scr_manager_gif_start(int frame_count) {
 
 void scr_manager_gif_frame(int idx, const char *path, int duration_ms) {
     scr_image_gif_frame(idx, path, duration_ms);
+}
+
+void scr_manager_set_chat_state(int state) {
+    scr_chat_set_state((chat_state_t)state);
+}
+
+void scr_manager_set_chat_text(const char *text) {
+    scr_chat_set_text(text);
 }

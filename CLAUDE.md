@@ -78,11 +78,12 @@ Newline-delimited JSON over Unix domain socket `/tmp/luckfox_gui.sock`:
 | `screens/scr_manager.c` | Screen switching with 200ms fade animation |
 | `screens/scr_eyes.c` | Animated eyes with 9-zone gaze control |
 | `screens/scr_emoji.c` | PNG display from `/mnt/sdcard/emoji/` |
+| `screens/scr_chat.c` | AI Chat screen — 4 animated states (IDLE/LISTENING/THINKING/SPEAKING) |
 | `anim/eyes_anim.c` | Eye gaze/blink animations |
 
 ### Python Components (`board/sdcard/`)
 
-- **`http_api_server_v2.py`**: HTTP API on port 8080. Key endpoints: `GET /api/mode/{status,eyes}`, `POST /api/text`, `POST /api/image`, `POST /api/gif/frames`, `POST /api/audio/play`
+- **`http_api_server_v2.py`**: HTTP API on port 8080. Key endpoints: `GET /api/mode/{status,eyes,chat}`, `POST /api/text`, `POST /api/image`, `POST /api/gif/frames`, `POST /api/audio/play`, `POST /api/chat/state`
 - **`gui_client.py`**: Thread-safe IPC client with auto-reconnect (0.5s backoff)
 - **`audio_sender.py`**: UART2 protocol to ESP32-C3 — binary framing with SYNC `0xAA55`, packet type, length, payload, XOR checksum @ 921600 baud
 
@@ -91,7 +92,7 @@ Newline-delimited JSON over Unix domain socket `/tmp/luckfox_gui.sock`:
 - Color depth: 16-bit RGB565
 - Memory buffer: 48KB
 - DPI: 200, display size: 240×240
-- Enabled fonts: Montserrat 12, 16, 24, 32
+- Enabled fonts: Montserrat 12, 16, 24, 32, 48
 
 ## Key Reference Docs
 
@@ -101,7 +102,42 @@ Newline-delimited JSON over Unix domain socket `/tmp/luckfox_gui.sock`:
 
 ## Screens
 
-Six screen types managed by `scr_manager`: `STATUS`, `EYES`, `EMOJI`, `TEXT`, `IMAGE`, `MENU`
+Seven screen types managed by `scr_manager`: `STATUS`, `EYES`, `EMOJI`, `TEXT`, `IMAGE`, `MENU`, `CHAT`
+
+### AI Chat Screen (`SCR_CHAT`)
+
+Four states driven by IPC commands or HTTP API:
+
+| State | Value | Visual | Color |
+|-------|-------|--------|-------|
+| `CHAT_IDLE` | 0 | Large mic symbol + "HOLD BUTTON" | Gray `#444` |
+| `CHAT_LISTENING` | 1 | 7 animated waveform bars (ping-pong) | Green `#00FF80` |
+| `CHAT_THINKING` | 2 | Spinning partial arc (300° fill) | Orange `#FF8800` |
+| `CHAT_SPEAKING` | 3 | Scrolling response text + dot indicators | Cyan `#00CCFF` |
+
+IPC commands:
+- `{"cmd": "screen", "name": "chat"}` — navigate to chat screen
+- `{"cmd": "chat_state", "state": 0}` — set state (0–3)
+- `{"cmd": "chat_text", "text": "..."}` — set speaking text
+
+HTTP endpoints:
+- `GET /api/mode/chat` — switch to chat screen
+- `POST /api/chat/state` — body: `{"state": 1, "text": "optional response text"}`
+
+### Menu Screen (`SCR_MENU`)
+
+6-card horizontal tileview (swipe or LEFT/RIGHT buttons, ENTER to enter):
+`Eyes → Status → Emoji → Text → Image → AI Chat`
+
+Dot indicator bar: 6 pills at bottom (active = 14px wide accent-colored, inactive = 7px gray).
+
+### Design System
+
+Smartwatch-style, all screens use:
+- Pure black `#000000` background
+- Font scale: 48px primary value, 32px secondary, 24px labels, 16px body, 12px meta
+- One dominant element per screen, no persistent navigation chrome
+- `lv_font_montserrat_48` must be enabled in `lv_conf.h` (`LV_FONT_MONTSERRAT_48 1`)
 
 ## Board Hardware
 

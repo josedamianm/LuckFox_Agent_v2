@@ -22,7 +22,7 @@ void scr_text_create(void) {
     lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_center(lbl);
     lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
-    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_24, 0);
     lv_label_set_text(lbl, "");
 }
 
@@ -34,10 +34,11 @@ void scr_text_set(const char *text, const char *hex_color, int scale) {
     lv_label_set_text(lbl, text);
     lv_obj_set_style_text_color(lbl, parse_hex_color(hex_color), 0);
 
-    const lv_font_t *font = &lv_font_montserrat_16;
-    if (scale >= 4) font = &lv_font_montserrat_32;
+    const lv_font_t *font = &lv_font_montserrat_24;
+    if      (scale >= 5) font = &lv_font_montserrat_48;
+    else if (scale >= 4) font = &lv_font_montserrat_32;
     else if (scale >= 3) font = &lv_font_montserrat_24;
     else if (scale >= 2) font = &lv_font_montserrat_16;
-    else font = &lv_font_montserrat_12;
+    else                 font = &lv_font_montserrat_12;
     lv_obj_set_style_text_font(lbl, font, 0);
 }

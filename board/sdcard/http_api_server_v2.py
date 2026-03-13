@@ -96,6 +96,10 @@ class APIHandler(BaseHTTPRequestHandler):
             gui.switch_screen("emoji", emoji=name, **self._parse_dir())
             self._json(200, {'mode': 'emoji', 'emoji': name})
 
+        elif path == '/api/mode/chat':
+            gui.switch_screen("chat", **self._parse_dir())
+            self._json(200, {'mode': 'chat'})
+
         elif path == '/api/capture':
             jpeg_data, err = capture_frame()
             if jpeg_data:
@@ -174,6 +178,19 @@ class APIHandler(BaseHTTPRequestHandler):
                     self._json(400, {'error': str(e)})
             else:
                 self._json(400, {'error': 'No frame data'})
+
+        elif path == '/api/chat/state':
+            try:
+                data = json.loads(body)
+                # state: 0=idle, 1=listening, 2=thinking, 3=speaking
+                state = int(data.get('state', 0))
+                text = data.get('text', '')
+                gui.send_cmd({"cmd": "chat_state", "state": state})
+                if text:
+                    gui.send_cmd({"cmd": "chat_text", "text": text})
+                self._json(200, {'mode': 'chat', 'state': state})
+            except Exception as e:
+                self._json(400, {'error': str(e)})
 
         elif path == '/api/audio/play':
             if not HAS_AUDIO:

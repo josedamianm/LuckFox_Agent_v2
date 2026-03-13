@@ -74,6 +74,7 @@ void cmd_parser_handle(const char *json_line, int client_fd) {
         }
         else if (strcmp(name, "image") == 0) scr_manager_switch_dir(SCR_IMAGE, dir);
         else if (strcmp(name, "menu") == 0) scr_manager_switch_dir(SCR_MENU, dir);
+        else if (strcmp(name, "chat") == 0) scr_manager_switch_dir(SCR_CHAT, dir);
         ipc_server_send(client_fd, "{\"status\":\"ok\"}");
     }
     else if (strcmp(cmd, "text") == 0) {
@@ -116,6 +117,16 @@ void cmd_parser_handle(const char *json_line, int client_fd) {
         int dur = json_get_int(json_line, "duration_ms", 50);
         json_get_str(json_line, "path", path, sizeof(path));
         scr_manager_gif_frame(idx, path, dur);
+        ipc_server_send(client_fd, "{\"status\":\"ok\"}");
+    }
+    else if (strcmp(cmd, "chat_state") == 0) {
+        int state = json_get_int(json_line, "state", 0);
+        scr_manager_set_chat_state(state);
+        ipc_server_send(client_fd, "{\"status\":\"ok\"}");
+    }
+    else if (strcmp(cmd, "chat_text") == 0) {
+        json_get_str(json_line, "text", text, sizeof(text));
+        scr_manager_set_chat_text(text);
         ipc_server_send(client_fd, "{\"status\":\"ok\"}");
     }
     else if (strcmp(cmd, "get_state") == 0) {
