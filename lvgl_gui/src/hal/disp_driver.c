@@ -184,7 +184,7 @@ lv_display_t *disp_driver_init(void) {
 
     lv_display_t *disp = lv_display_create(DISP_HOR_RES, DISP_VER_RES);
     lv_display_set_flush_cb(disp, flush_cb);
-    lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565_SWAP);
+    lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565);
     lv_display_set_buffers(disp, draw_buf_1, draw_buf_2,
                            sizeof(draw_buf_1),
                            LV_DISPLAY_RENDER_MODE_PARTIAL);
