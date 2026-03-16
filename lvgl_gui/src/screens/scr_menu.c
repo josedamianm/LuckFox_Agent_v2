@@ -119,7 +119,7 @@ void scr_menu_create(void) {
         lv_obj_set_size(tint, 240, 224);
         lv_obj_set_pos(tint, 0, 0);
         lv_obj_set_style_bg_color(tint, accent, 0);
-        lv_obj_set_style_bg_opa(tint, LV_OPA_5, 0);
+        lv_obj_set_style_bg_opa(tint, LV_OPA_10, 0);
         lv_obj_set_style_border_width(tint, 0, 0);
         lv_obj_set_style_radius(tint, 0, 0);
         lv_obj_clear_flag(tint, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
