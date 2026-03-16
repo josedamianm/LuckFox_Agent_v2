@@ -40,10 +40,20 @@ static int gpio_open_input(int pin) {
 
     snprintf(path, sizeof(path), "/sys/class/gpio/gpio%d/direction", pin);
     fd = open(path, O_WRONLY);
-    if (fd >= 0) { write(fd, "in", 2); close(fd); }
+    if (fd < 0) {
+        fprintf(stderr, "[btn] gpio%d direction open failed\n", pin);
+    } else {
+        write(fd, "in", 2);
+        close(fd);
+    }
 
     snprintf(path, sizeof(path), "/sys/class/gpio/gpio%d/value", pin);
-    return open(path, O_RDONLY);
+    fd = open(path, O_RDONLY);
+    if (fd < 0)
+        fprintf(stderr, "[btn] gpio%d value open failed\n", pin);
+    else
+        fprintf(stderr, "[btn] gpio%d OK (fd=%d)\n", pin, fd);
+    return fd;
 }
 
 static bool gpio_read(int fd) {
@@ -63,6 +73,7 @@ static void read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
         if (raw != btn_state[i] && (now - last_change[i]) > DEBOUNCE_MS) {
             btn_state[i] = raw;
             last_change[i] = now;
+            fprintf(stderr, "[btn] %s %s\n", btn_names[i], raw ? "PRESSED" : "released");
             if (g_event_cb) g_event_cb((btn_id_t)i, raw);
         }
     }
