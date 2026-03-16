@@ -44,6 +44,13 @@ int main(void) {
     int btn_fds[9];
     for (int i = 0; i < 9; i++) {
         char path[64];
+        int fd;
+        snprintf(path, sizeof(path), "%d", btn_gpios[i]);
+        fd = open("/sys/class/gpio/export", O_WRONLY);
+        if (fd >= 0) { write(fd, path, strlen(path)); close(fd); }
+        snprintf(path, sizeof(path), "/sys/class/gpio/gpio%d/direction", btn_gpios[i]);
+        fd = open(path, O_WRONLY);
+        if (fd >= 0) { write(fd, "in", 2); close(fd); }
         snprintf(path, sizeof(path), "/sys/class/gpio/gpio%d/value", btn_gpios[i]);
         btn_fds[i] = open(path, O_RDONLY);
         fprintf(stderr, "[main] gpio%d fd=%d\n", btn_gpios[i], btn_fds[i]);
