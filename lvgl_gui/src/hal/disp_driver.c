@@ -20,7 +20,7 @@
 #define GPIO_DC        73
 #define GPIO_RST       51
 #define GPIO_BL        72
-#define XOFF           80
+#define XOFF           0
 #define YOFF           0
 
 #define DRAW_BUF_LINES DISP_VER_RES
@@ -95,8 +95,8 @@ static void st7789_init(void) {
 
     lcd_cmd(0x3A); lcd_data_byte(0x55);  /* COLMOD: 16-bit RGB565 */
 
-    /* MADCTL: rotation=90 → 0x60 */
-    lcd_cmd(0x36); lcd_data_byte(0x60);
+    /* MADCTL: rotation=270 → 0xA0 */
+    lcd_cmd(0x36); lcd_data_byte(0xA0);
 
     /* Porch setting */
     lcd_cmd(0xB2);
@@ -194,6 +194,7 @@ lv_display_t *disp_driver_init(void) {
     lv_display_set_buffers(disp, draw_buf_1, NULL,
                            sizeof(draw_buf_1),
                            LV_DISPLAY_RENDER_MODE_FULL);
+    lv_display_set_rotation(disp, LV_DISPLAY_ROTATION_180);
     return disp;
 }
 
