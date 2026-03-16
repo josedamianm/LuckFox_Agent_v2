@@ -10,10 +10,12 @@ add_compile_definitions(LV_CONF_INCLUDE_SIMPLE)
 # Add LVGL library (must exist as git submodule at lib/lvgl)
 add_subdirectory(lib/lvgl)
 
-# Remove .S assembly files - ARM Cortex-A7 doesn't support NEON/Helium
-get_target_property(_lvgl_srcs lvgl SOURCES)
-list(FILTER _lvgl_srcs EXCLUDE REGEX "\\.[Ss]$")
-set_target_properties(lvgl PROPERTIES SOURCES "${_lvgl_srcs}")
+set_source_files_properties(
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/lvgl/src/draw/sw/blend/neon/lv_blend_neon.S
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/lvgl/src/draw/sw/blend/helium/lv_blend_helium.S
+    DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/lib/lvgl
+    PROPERTIES HEADER_FILE_ONLY ON
+)
 
 # Gather all application sources
 file(GLOB_RECURSE APP_SOURCES
