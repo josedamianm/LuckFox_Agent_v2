@@ -20,8 +20,8 @@
 #define GPIO_DC        73
 #define GPIO_RST       51
 #define GPIO_BL        72
-#define XOFF           0
-#define YOFF           80
+#define XOFF           80
+#define YOFF           0
 
 #define DRAW_BUF_LINES DISP_VER_RES
 static lv_color_t draw_buf_1[DISP_HOR_RES * DRAW_BUF_LINES];
