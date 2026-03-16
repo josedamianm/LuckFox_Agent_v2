@@ -10,6 +10,11 @@ add_compile_definitions(LV_CONF_INCLUDE_SIMPLE)
 # Add LVGL library (must exist as git submodule at lib/lvgl)
 add_subdirectory(lib/lvgl)
 
+# Remove .S assembly files - ARM Cortex-A7 doesn't support NEON/Helium
+get_target_property(_lvgl_srcs lvgl SOURCES)
+list(FILTER _lvgl_srcs EXCLUDE REGEX "\\.[Ss]$")
+set_target_properties(lvgl PROPERTIES SOURCES "${_lvgl_srcs}")
+
 # Gather all application sources
 file(GLOB_RECURSE APP_SOURCES
     "src/*.c"
