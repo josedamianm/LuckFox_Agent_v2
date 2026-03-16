@@ -98,33 +98,33 @@ static void timer_cb(lv_timer_t *t) {
  */
 void scr_status_create(void) {
     scr = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
+    lv_obj_set_style_bg_color(scr, lv_color_make(0x0A, 0x0A, 0x1A), 0);
     lv_obj_set_style_pad_all(scr, 0, 0);
 
     /* ── Title label ── */
     lv_obj_t *lbl_title = lv_label_create(scr);
     lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(lbl_title, lv_color_make(0x33, 0x33, 0x33), 0);
+    lv_obj_set_style_text_color(lbl_title, lv_color_make(0xAA, 0xAA, 0xAA), 0);
     lv_obj_align(lbl_title, LV_ALIGN_TOP_MID, 0, 14);
     lv_label_set_text(lbl_title, "LUCKFOX AGENT");
 
     /* ── IP address (large, cyan) ── */
     lbl_ip = lv_label_create(scr);
     lv_obj_set_style_text_font(lbl_ip, &lv_font_montserrat_32, 0);
-    lv_obj_set_style_text_color(lbl_ip, lv_color_make(0x44, 0x88, 0xFF), 0);
+    lv_obj_set_style_text_color(lbl_ip, lv_color_make(0x00, 0xEE, 0xFF), 0);
     lv_obj_align(lbl_ip, LV_ALIGN_TOP_MID, 0, 32);
     lv_label_set_text(lbl_ip, "...");
 
     /* ── CPU row ── */
     lv_obj_t *lbl_cpu_name = lv_label_create(scr);
     lv_obj_set_style_text_font(lbl_cpu_name, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(lbl_cpu_name, lv_color_make(0x44, 0x44, 0x44), 0);
+    lv_obj_set_style_text_color(lbl_cpu_name, lv_color_make(0xCC, 0xCC, 0xCC), 0);
     lv_obj_align(lbl_cpu_name, LV_ALIGN_TOP_LEFT, 12, 96);
     lv_label_set_text(lbl_cpu_name, "CPU");
 
     lbl_cpu_val = lv_label_create(scr);
     lv_obj_set_style_text_font(lbl_cpu_val, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(lbl_cpu_val, lv_color_make(0x00, 0xCC, 0x80), 0);
+    lv_obj_set_style_text_color(lbl_cpu_val, lv_color_make(0x00, 0xFF, 0x88), 0);
     lv_obj_align(lbl_cpu_val, LV_ALIGN_TOP_RIGHT, -12, 90);
     lv_label_set_text(lbl_cpu_val, "0%");
 
@@ -132,21 +132,21 @@ void scr_status_create(void) {
     lv_obj_set_size(bar_cpu, 216, 10);
     lv_obj_align(bar_cpu, LV_ALIGN_TOP_MID, 0, 122);
     lv_bar_set_range(bar_cpu, 0, 100);
-    lv_obj_set_style_bg_color(bar_cpu, lv_color_make(0x11, 0x11, 0x11), 0);
-    lv_obj_set_style_bg_color(bar_cpu, lv_color_make(0x00, 0xCC, 0x80), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(bar_cpu, lv_color_make(0x22, 0x22, 0x22), 0);
+    lv_obj_set_style_bg_color(bar_cpu, lv_color_make(0x00, 0xFF, 0x88), LV_PART_INDICATOR);
     lv_obj_set_style_radius(bar_cpu, 5, 0);
     lv_obj_set_style_radius(bar_cpu, 5, LV_PART_INDICATOR);
 
     /* ── MEM row ── */
     lv_obj_t *lbl_mem_name = lv_label_create(scr);
     lv_obj_set_style_text_font(lbl_mem_name, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(lbl_mem_name, lv_color_make(0x44, 0x44, 0x44), 0);
+    lv_obj_set_style_text_color(lbl_mem_name, lv_color_make(0xCC, 0xCC, 0xCC), 0);
     lv_obj_align(lbl_mem_name, LV_ALIGN_TOP_LEFT, 12, 148);
     lv_label_set_text(lbl_mem_name, "MEM");
 
     lbl_mem_val = lv_label_create(scr);
     lv_obj_set_style_text_font(lbl_mem_val, &lv_font_montserrat_24, 0);
-    lv_obj_set_style_text_color(lbl_mem_val, lv_color_make(0x44, 0x88, 0xFF), 0);
+    lv_obj_set_style_text_color(lbl_mem_val, lv_color_make(0x44, 0xAA, 0xFF), 0);
     lv_obj_align(lbl_mem_val, LV_ALIGN_TOP_RIGHT, -12, 142);
     lv_label_set_text(lbl_mem_val, "0%");
 
@@ -154,15 +154,15 @@ void scr_status_create(void) {
     lv_obj_set_size(bar_mem, 216, 10);
     lv_obj_align(bar_mem, LV_ALIGN_TOP_MID, 0, 174);
     lv_bar_set_range(bar_mem, 0, 100);
-    lv_obj_set_style_bg_color(bar_mem, lv_color_make(0x11, 0x11, 0x11), 0);
-    lv_obj_set_style_bg_color(bar_mem, lv_color_make(0x44, 0x88, 0xFF), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(bar_mem, lv_color_make(0x22, 0x22, 0x22), 0);
+    lv_obj_set_style_bg_color(bar_mem, lv_color_make(0x44, 0xAA, 0xFF), LV_PART_INDICATOR);
     lv_obj_set_style_radius(bar_mem, 5, 0);
     lv_obj_set_style_radius(bar_mem, 5, LV_PART_INDICATOR);
 
-    /* ── Uptime (tiny, muted, bottom) ── */
+    /* ── Bottom label ── */
     lv_obj_t *lbl_up = lv_label_create(scr);
     lv_obj_set_style_text_font(lbl_up, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(lbl_up, lv_color_make(0x22, 0x22, 0x22), 0);
+    lv_obj_set_style_text_color(lbl_up, lv_color_make(0x77, 0x77, 0x77), 0);
     lv_obj_align(lbl_up, LV_ALIGN_BOTTOM_MID, 0, -8);
     lv_label_set_text(lbl_up, "LUCKFOX PICO MAX");
 
