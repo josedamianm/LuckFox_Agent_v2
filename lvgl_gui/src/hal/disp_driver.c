@@ -23,7 +23,7 @@
 #define XOFF           80
 #define YOFF           0
 
-#define DRAW_BUF_LINES 20
+#define DRAW_BUF_LINES 8
 static lv_color_t draw_buf_1[DISP_HOR_RES * DRAW_BUF_LINES];
 static lv_color_t draw_buf_2[DISP_HOR_RES * DRAW_BUF_LINES];
 
@@ -59,20 +59,13 @@ static void gpio_write(int fd, int val) {
 
 /* ── SPI helpers ────────────────────────────────────────────────── */
 static void spi_xfer(const uint8_t *data, size_t len) {
-    const size_t CHUNK = 4096;
-    size_t offset = 0;
-    while (offset < len) {
-        size_t n = len - offset;
-        if (n > CHUNK) n = CHUNK;
-        struct spi_ioc_transfer tr;
-        memset(&tr, 0, sizeof(tr));
-        tr.tx_buf        = (unsigned long)(data + offset);
-        tr.len           = (uint32_t)n;
-        tr.speed_hz      = SPI_HZ;
-        tr.bits_per_word = 8;
-        ioctl(spi_fd, SPI_IOC_MESSAGE(1), &tr);
-        offset += n;
-    }
+    struct spi_ioc_transfer tr;
+    memset(&tr, 0, sizeof(tr));
+    tr.tx_buf        = (unsigned long)data;
+    tr.len           = (uint32_t)len;
+    tr.speed_hz      = SPI_HZ;
+    tr.bits_per_word = 8;
+    ioctl(spi_fd, SPI_IOC_MESSAGE(1), &tr);
 }
 
 static void lcd_cmd(uint8_t c) {
