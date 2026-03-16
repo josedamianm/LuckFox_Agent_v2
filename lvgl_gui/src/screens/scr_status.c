@@ -11,14 +11,31 @@ static lv_obj_t *bar_cpu;
 static lv_obj_t *bar_mem;
 
 static void read_ip(char *out, int sz) {
-    FILE *f = popen("ip -4 addr show eth0 2>/dev/null | grep -oP 'inet \\K[0-9.]+'", "r");
-    if (f) {
-        if (fgets(out, sz, f) == NULL) strncpy(out, "---", sz);
-        else { char *nl = strchr(out, '\n'); if (nl) *nl = '\0'; }
-        pclose(f);
-    } else {
-        strncpy(out, "---", sz);
+    FILE *f = fopen("/proc/net/fib_trie", "r");
+    strncpy(out, "---", sz);
+    if (!f) return;
+    char line[128];
+    int found_local = 0;
+    while (fgets(line, sizeof(line), f)) {
+        if (strstr(line, "LOCAL")) { found_local = 1; continue; }
+        if (found_local) {
+            char *p = strstr(line, "32 host");
+            if (p) {
+                char *s = line;
+                while (*s == ' ' || *s == '\t') s++;
+                char *e = s;
+                while (*e && *e != '\n' && *e != ' ') e++;
+                *e = '\0';
+                if (strncmp(s, "127.", 4) != 0 && strlen(s) > 6) {
+                    strncpy(out, s, sz - 1);
+                    out[sz - 1] = '\0';
+                    break;
+                }
+            }
+            found_local = 0;
+        }
     }
+    fclose(f);
 }
 
 static int read_cpu_percent(void) {
