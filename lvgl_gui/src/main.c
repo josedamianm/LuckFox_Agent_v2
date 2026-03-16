@@ -1,3 +1,4 @@
+#include "lvgl.h"
 #include "hal/disp_driver.h"
 #include <signal.h>
 #include <unistd.h>
@@ -12,6 +13,7 @@ int main(void) {
     signal(SIGTERM, sig_handler);
     signal(SIGINT,  sig_handler);
 
+    lv_init();
     disp_driver_init();
 
     static const int btn_gpios[4] = {57, 69, 65, 67};
