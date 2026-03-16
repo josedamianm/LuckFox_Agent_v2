@@ -149,12 +149,19 @@ static void st7789_fill_solid(uint8_t hi, uint8_t lo) {
 /* ── LVGL flush callback ────────────────────────────────────────── */
 static void flush_cb(lv_display_t *disp, const lv_area_t *area,
                      uint8_t *px_map) {
-    set_window((uint16_t)area->x1, (uint16_t)area->y1,
-               (uint16_t)area->x2, (uint16_t)area->y2);
-
     int32_t w = lv_area_get_width(area);
     int32_t h = lv_area_get_height(area);
-    lcd_data(px_map, (size_t)(w * h * 2));
+    size_t len = (size_t)(w * h * 2);
+
+    for (size_t i = 0; i < len; i += 2) {
+        uint8_t tmp  = px_map[i];
+        px_map[i]    = px_map[i + 1];
+        px_map[i + 1] = tmp;
+    }
+
+    set_window((uint16_t)area->x1, (uint16_t)area->y1,
+               (uint16_t)area->x2, (uint16_t)area->y2);
+    lcd_data(px_map, len);
 
     lv_display_flush_ready(disp);
 }
