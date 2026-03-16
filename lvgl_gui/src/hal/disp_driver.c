@@ -198,6 +198,15 @@ lv_display_t *disp_driver_init(void) {
     return disp;
 }
 
+void disp_fill_color(uint8_t r, uint8_t g, uint8_t b) {
+    uint16_t c = (((uint16_t)(r & 0xF8)) << 8) |
+                 (((uint16_t)(g & 0xFC)) << 3) |
+                 ((uint16_t)(b >> 3));
+    uint8_t hi = (c >> 8) & 0xFF;
+    uint8_t lo = c & 0xFF;
+    st7789_fill_solid(hi, lo);
+}
+
 void disp_driver_deinit(void) {
     gpio_write(gpio_bl, 0);
     if (spi_fd >= 0)   { close(spi_fd);   spi_fd  = -1; }
