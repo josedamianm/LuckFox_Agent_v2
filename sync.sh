@@ -17,17 +17,15 @@ if [ "${1:-}" = "--private" ]; then
 fi
 
 FILE_MAP=(
+    "lvgl_gui/build/luckfox_gui:/root/Executables/luckfox_gui"
     "board/root/main.py:/root/main.py"
     "board/root/enable_spi0_spidev.dtbo:/root/enable_spi0_spidev.dtbo"
     "board/root/enable_spi0_spidev.dts:/root/enable_spi0_spidev.dts"
     "board/root/enable_uart2.dts:/root/enable_uart2.dts"
+    "board/sdcard/gui_client.py:/mnt/sdcard/gui_client.py"
+    "board/sdcard/http_api_server_v2.py:/mnt/sdcard/http_api_server_v2.py"
     "board/sdcard/http_api_server.py:/mnt/sdcard/http_api_server.py"
-    "board/sdcard/display_eyes.py:/mnt/sdcard/display_eyes.py"
-    "board/sdcard/display_ip.py:/mnt/sdcard/display_ip.py"
-    "board/sdcard/display_status.py:/mnt/sdcard/display_status.py"
     "board/sdcard/rtsp_capture.py:/mnt/sdcard/rtsp_capture.py"
-    "board/sdcard/testing_pico_lcd.py:/mnt/sdcard/testing_pico_lcd.py"
-    "board/sdcard/testing_pico_lcd_buttons.py:/mnt/sdcard/testing_pico_lcd_buttons.py"
     "board/sdcard/frpc.toml:/mnt/sdcard/frpc.toml"
     "board/sdcard/audio_sender.py:/mnt/sdcard/audio_sender.py"
     "board/init.d/S20spi0overlay:/etc/init.d/S20spi0overlay"
