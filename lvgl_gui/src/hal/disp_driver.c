@@ -23,9 +23,8 @@
 #define XOFF           80
 #define YOFF           0
 
-#define DRAW_BUF_LINES 8
+#define DRAW_BUF_LINES DISP_VER_RES
 static lv_color_t draw_buf_1[DISP_HOR_RES * DRAW_BUF_LINES];
-static lv_color_t draw_buf_2[DISP_HOR_RES * DRAW_BUF_LINES];
 
 static int spi_fd    = -1;
 static int gpio_dc   = -1;
@@ -192,9 +191,9 @@ lv_display_t *disp_driver_init(void) {
     lv_display_t *disp = lv_display_create(DISP_HOR_RES, DISP_VER_RES);
     lv_display_set_flush_cb(disp, flush_cb);
     lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565);
-    lv_display_set_buffers(disp, draw_buf_1, draw_buf_2,
+    lv_display_set_buffers(disp, draw_buf_1, NULL,
                            sizeof(draw_buf_1),
-                           LV_DISPLAY_RENDER_MODE_PARTIAL);
+                           LV_DISPLAY_RENDER_MODE_FULL);
     return disp;
 }
 
