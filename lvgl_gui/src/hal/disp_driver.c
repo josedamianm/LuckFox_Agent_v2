@@ -54,18 +54,20 @@ static int gpio_open(int pin, const char *dir) {
 }
 
 static void gpio_write(int fd, int val) {
+    lseek(fd, 0, SEEK_SET);
     write(fd, val ? "1" : "0", 1);
 }
 
 /* ── SPI helpers ────────────────────────────────────────────────── */
 static void spi_xfer(const uint8_t *data, size_t len) {
-    struct spi_ioc_transfer tr;
-    memset(&tr, 0, sizeof(tr));
-    tr.tx_buf        = (unsigned long)data;
-    tr.len           = (uint32_t)len;
-    tr.speed_hz      = SPI_HZ;
-    tr.bits_per_word = 8;
-    ioctl(spi_fd, SPI_IOC_MESSAGE(1), &tr);
+    const size_t CHUNK = 4096;
+    size_t offset = 0;
+    while (offset < len) {
+        size_t n = len - offset;
+        if (n > CHUNK) n = CHUNK;
+        write(spi_fd, data + offset, n);
+        offset += n;
+    }
 }
 
 static void lcd_cmd(uint8_t c) {
@@ -135,6 +137,15 @@ static void set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
     lcd_cmd(0x2C);
 }
 
+/* fill screen with a solid big-endian RGB565 color – diagnostic only */
+static void st7789_fill_solid(uint8_t hi, uint8_t lo) {
+    set_window(0, 0, DISP_HOR_RES - 1, DISP_VER_RES - 1);
+    uint8_t row[DISP_HOR_RES * 2];
+    for (int x = 0; x < DISP_HOR_RES; x++) { row[x*2] = hi; row[x*2+1] = lo; }
+    gpio_write(gpio_dc, 1);
+    for (int y = 0; y < DISP_VER_RES; y++) spi_xfer(row, sizeof(row));
+}
+
 /* ── LVGL flush callback ────────────────────────────────────────── */
 static void flush_cb(lv_display_t *disp, const lv_area_t *area,
                      uint8_t *px_map) {
@@ -165,9 +176,15 @@ lv_display_t *disp_driver_init(void) {
 
     st7789_init();
 
+    /* diagnostic: fill blue (0x001F big-endian).
+     * If screen goes blue, init+SPI are working.
+     * If screen stays red, the init sequence is not reaching the panel. */
+    st7789_fill_solid(0x00, 0x1F);
+    usleep(500000);
+
     lv_display_t *disp = lv_display_create(DISP_HOR_RES, DISP_VER_RES);
     lv_display_set_flush_cb(disp, flush_cb);
-    lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565);
+    lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565_SWAP);
     lv_display_set_buffers(disp, draw_buf_1, draw_buf_2,
                            sizeof(draw_buf_1),
                            LV_DISPLAY_RENDER_MODE_PARTIAL);
