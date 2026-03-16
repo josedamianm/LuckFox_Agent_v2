@@ -67,6 +67,8 @@ int main(void) {
                     case 2: set_screen_color(lv_color_hex(0xFFFF00), "YELLOW\n\nA=Red  B=Blue\nX=Yellow  Y=Green"); break;
                     case 3: set_screen_color(lv_color_hex(0x00FF00), "GREEN\n\nA=Red  B=Blue\nX=Yellow  Y=Green"); break;
                 }
+                lv_obj_invalidate(lv_screen_active());
+                lv_timer_handler();
             }
             prev[i] = pressed;
         }
