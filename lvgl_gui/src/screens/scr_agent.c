@@ -124,7 +124,7 @@ static lv_obj_t *make_label(lv_obj_t *parent, const char *text,
 static void build_idle_status(lv_obj_t *parent) {
     lv_obj_t *c = g_idle_containers[0] = make_idle_subpage(parent);
 
-    make_label(c, "PepeBotL1", &lv_font_montserrat_20,
+    make_label(c, "PepeBotL1", &lv_font_montserrat_24,
                lv_color_hex(COLOR_GREEN), 8, 220);
 
     make_label(c, "divider", &lv_font_montserrat_12,
@@ -139,7 +139,7 @@ static void build_idle_status(lv_obj_t *parent) {
     make_label(c, "IP", &lv_font_montserrat_12,
                lv_color_hex(COLOR_DIM), 138, 220);
 
-    g_label_ip = make_label(c, "---", &lv_font_montserrat_20,
+    g_label_ip = make_label(c, "---", &lv_font_montserrat_24,
                             lv_color_hex(COLOR_CYAN), 155, 220);
 
     make_label(c, "< LEFT / RIGHT >", &lv_font_montserrat_12,
