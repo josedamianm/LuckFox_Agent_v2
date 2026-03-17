@@ -152,18 +152,10 @@ static void flush_cb(lv_display_t *disp, const lv_area_t *area,
     int32_t h = lv_area_get_height(area);
     size_t len = (size_t)(w * h * 2);
 
-    /* byte-swap RGB565 for ST7789 big-endian, and reverse pixel order for 180° */
-    size_t npix = len / 2;
-    for (size_t i = 0; i < npix / 2; i++) {
-        size_t j = npix - 1 - i;
-        uint8_t a0 = px_map[i*2],     a1 = px_map[i*2+1];
-        uint8_t b0 = px_map[j*2],     b1 = px_map[j*2+1];
-        px_map[i*2]   = b1; px_map[i*2+1] = b0;
-        px_map[j*2]   = a1; px_map[j*2+1] = a0;
-    }
-    if (npix & 1) {
-        size_t m = npix / 2;
-        uint8_t t = px_map[m*2]; px_map[m*2] = px_map[m*2+1]; px_map[m*2+1] = t;
+    for (size_t i = 0; i < len; i += 2) {
+        uint8_t tmp  = px_map[i];
+        px_map[i]    = px_map[i + 1];
+        px_map[i + 1] = tmp;
     }
 
     set_window((uint16_t)area->x1, (uint16_t)area->y1,
