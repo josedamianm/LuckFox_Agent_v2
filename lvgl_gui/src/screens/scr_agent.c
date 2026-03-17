@@ -37,7 +37,8 @@ static lv_obj_t *g_label_time;
 static lv_obj_t *g_label_date;
 static lv_obj_t *g_label_ip;
 
-static lv_timer_t *g_clock_timer;
+static uint32_t g_last_clock_ms = 0;
+static uint32_t g_last_refr_ms  = 0;
 
 /* ------------------------------------------------------------------ */
 
@@ -268,8 +269,8 @@ void agent_screen_init(void) {
     build_speaking(scr);
     build_error(scr);
 
-    g_clock_timer = lv_timer_create(clock_timer_cb, 1000, NULL);
-    lv_timer_ready(g_clock_timer);
+    g_last_clock_ms = lv_tick_get();
+    g_last_refr_ms  = lv_tick_get();
 
     agent_set_state(AGENT_IDLE, NULL);
 }
@@ -343,11 +344,24 @@ void agent_idle_nav(int dir) {
 
 void agent_tick(void) {
     g_tick++;
+    uint32_t now = lv_tick_get();
+
+    kawaii_tick();
+
+    if ((now - g_last_clock_ms) >= 1000u) {
+        g_last_clock_ms = now;
+        clock_timer_cb(NULL);
+    }
 
     if (g_state == AGENT_SPEAKING) {
         int active = (g_tick / 20) % DOT_COUNT;
         for (int i = 0; i < DOT_COUNT; i++)
             lv_obj_set_style_bg_opa(g_dots[i],
                 i == active ? LV_OPA_COVER : LV_OPA_30, 0);
+    }
+
+    if ((now - g_last_refr_ms) >= 33u) {
+        g_last_refr_ms = now;
+        lv_refr_now(NULL);
     }
 }

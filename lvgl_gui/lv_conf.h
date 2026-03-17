@@ -28,7 +28,7 @@
 #define LV_TICK_CUSTOM_INCLUDE <sys/time.h>
 #define LV_TICK_CUSTOM_SYS_TIME_EXPR \
     ({ struct timeval _tv; gettimeofday(&_tv, NULL); \
-       (uint32_t)(_tv.tv_sec * 1000 + _tv.tv_usec / 1000); })
+       (uint32_t)((uint32_t)(_tv.tv_sec) * 1000u + (uint32_t)(_tv.tv_usec / 1000u)); })
 
 #define LV_DPI_DEF 200
 

@@ -88,7 +88,6 @@ static void lerp_toward_target(void);
 static void update_display(void);
 static void update_single_eye(eye_t *e, uint8_t openness, bool is_left);
 static void update_mouth(void);
-static void timer_cb(lv_timer_t *t);
 
 /* ------------------------------------------------------------------ */
 /* Widget factory                                                       */
@@ -235,14 +234,12 @@ void kawaii_init(const kawaii_cfg_t *cfg)
     update_display();
 
     S.last_blink_ms = lv_tick_get();
-    S.timer = lv_timer_create(timer_cb, anim_ms, NULL);
     S.inited = true;
 }
 
 void kawaii_deinit(void)
 {
     if (!S.inited) return;
-    if (S.timer)     lv_timer_delete(S.timer);
     if (S.container) lv_obj_delete(S.container);
     memset(&S, 0, sizeof S);
 }
@@ -383,11 +380,10 @@ static void lerp_toward_target(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* Timer — runs every anim_ms, updates widget props (auto-invalidates) */
+/* Tick — call from main loop every iteration                          */
 /* ------------------------------------------------------------------ */
-static void timer_cb(lv_timer_t *t)
+void kawaii_tick(void)
 {
-    (void)t;
     if (!S.inited) return;
 
     uint32_t now = lv_tick_get();

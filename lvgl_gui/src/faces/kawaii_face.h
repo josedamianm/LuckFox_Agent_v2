@@ -24,6 +24,7 @@ typedef struct {
 } kawaii_cfg_t;
 
 void kawaii_init(const kawaii_cfg_t *cfg);
+void kawaii_tick(void);
 void kawaii_set_emotion(face_emotion_t emotion, bool smooth);
 face_emotion_t kawaii_get_emotion(void);
 void kawaii_trigger_blink(void);
