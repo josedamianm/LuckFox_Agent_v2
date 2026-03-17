@@ -6,7 +6,7 @@ import signal
 import sys
 import subprocess
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse
 from gui_client import GUIClient
 
 try:
@@ -53,6 +53,18 @@ def capture_frame():
         return None, str(e)
 
 
+def on_button_event(msg):
+    name = msg.get("name")
+    state = msg.get("state")
+    print(f"[btn] {name} {state}")
+
+    if name == "CTRL":
+        if state == "pressed":
+            gui.set_state("listening")
+        elif state == "released":
+            gui.set_state("thinking")
+
+
 class APIHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
@@ -70,35 +82,18 @@ class APIHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _parse_dir(self):
-        """Return dir= query param if provided, else omit (C binary auto-detects)."""
-        qs = parse_qs(urlparse(self.path).query)
-        d = qs.get('dir', [None])[0]
-        return {'dir': d} if d in ('left', 'right', 'fade') else {}
-
     def do_GET(self):
-        parsed = urlparse(self.path)
-        path = parsed.path.rstrip('/')
+        path = urlparse(self.path).path.rstrip('/')
 
         if path == '/api/status':
-            self._json(200, {'ip': get_ipv4(IFACE), 'has_audio': HAS_AUDIO})
+            self._json(200, {
+                'ip': get_ipv4(IFACE),
+                'has_audio': HAS_AUDIO,
+                'agent_state': gui.state
+            })
 
-        elif path == '/api/mode/status':
-            gui.switch_screen("status", **self._parse_dir())
-            self._json(200, {'mode': 'status'})
-
-        elif path == '/api/mode/eyes':
-            gui.switch_screen("eyes", **self._parse_dir())
-            self._json(200, {'mode': 'eyes'})
-
-        elif path.startswith('/api/emoji/'):
-            name = path.split('/')[-1]
-            gui.switch_screen("emoji", emoji=name, **self._parse_dir())
-            self._json(200, {'mode': 'emoji', 'emoji': name})
-
-        elif path == '/api/mode/chat':
-            gui.switch_screen("chat", **self._parse_dir())
-            self._json(200, {'mode': 'chat'})
+        elif path == '/api/agent/state':
+            self._json(200, {'state': gui.state})
 
         elif path == '/api/capture':
             jpeg_data, err = capture_frame()
@@ -134,62 +129,17 @@ class APIHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(length) if length > 0 else b''
 
-        if path == '/api/text':
+        if path == '/api/agent/state':
             try:
                 data = json.loads(body)
-                text = data.get('text', '')
-                color = data.get('color', '#FFFFFF')
-                scale = int(data.get('scale', 3))
-                extras = {}
-                if data.get('dir') in ('left', 'right', 'fade'):
-                    extras['dir'] = data['dir']
-                gui.switch_screen("text", text=text, color=color, scale=scale, **extras)
-                self._json(200, {'mode': 'text', 'text': text})
-            except Exception as e:
-                self._json(400, {'error': str(e)})
-
-        elif path == '/api/image':
-            if length > 0:
-                tmp_path = '/tmp/lvgl_img.bin'
-                with open(tmp_path, 'wb') as f:
-                    f.write(body)
-                gui.send_cmd({"cmd": "image", "path": tmp_path, "size": length})
-                self._json(200, {'mode': 'image', 'size': length})
-            else:
-                self._json(400, {'error': 'No image data'})
-
-        elif path == '/api/gif/frames':
-            if length > 0:
-                try:
-                    data = json.loads(body)
-                    frames = data.get('frames', [])
-                    durations = data.get('durations', [])
-                    gui.send_cmd({"cmd": "gif_start", "frame_count": len(frames)})
-                    for i, (frame_hex, dur_ms) in enumerate(zip(frames, durations)):
-                        frame_path = f'/tmp/gif_frame_{i}.bin'
-                        with open(frame_path, 'wb') as f:
-                            f.write(bytes.fromhex(frame_hex))
-                        gui.send_cmd({
-                            "cmd": "gif_frame", "index": i,
-                            "path": frame_path, "duration_ms": dur_ms
-                        })
-                    self._json(200, {'mode': 'gif', 'frames': len(frames)})
-                except Exception as e:
-                    self._json(400, {'error': str(e)})
-            else:
-                self._json(400, {'error': 'No frame data'})
-
-        elif path == '/api/chat/state':
-            try:
-                data = json.loads(body)
-                # state: 0=idle, 1=listening, 2=thinking, 3=speaking
-                state = int(data.get('state', 0))
-                text = data.get('text', '')
-                gui.send_cmd({"cmd": "chat_state", "state": state})
-                if text:
-                    gui.send_cmd({"cmd": "chat_text", "text": text})
-                self._json(200, {'mode': 'chat', 'state': state})
-            except Exception as e:
+                state = data.get('state', '')
+                text = data.get('text')
+                if state not in ('idle', 'listening', 'thinking', 'speaking', 'error'):
+                    self._json(400, {'error': f'Invalid state: {state}'})
+                    return
+                gui.set_state(state, text)
+                self._json(200, {'state': state})
+            except (json.JSONDecodeError, Exception) as e:
                 self._json(400, {'error': str(e)})
 
         elif path == '/api/audio/play':
@@ -223,11 +173,6 @@ class APIHandler(BaseHTTPRequestHandler):
 
         else:
             self._json(404, {'error': 'Not found'})
-
-
-def on_button_event(msg):
-    name = msg.get("name")
-    print(f"Button event: {name}")
 
 
 def main():

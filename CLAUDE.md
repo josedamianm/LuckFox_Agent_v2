@@ -37,9 +37,12 @@ luckfox_gui (C) → IPC event → Python HTTP server
 
 **Display + all 9 buttons confirmed working on hardware.**
 
-`main.c` contains the full agent application with IPC server, cmd_parser, agent screen manager, and GPIO button polling all wired in. The screen manager (`scr_agent.c`) implements all 5 agent states with tick-driven animations.
+**IPC/HTTP integration complete.** All three Python files now speak the V2 protocol:
+- `gui_client.py`: `set_state()` sends `{"cmd": "set_state", "state": "...", "text": "..."}` matching `cmd_parser.c`
+- `http_api_server_v2.py`: V2 agent state endpoints (`GET/POST /api/agent/state`), CTRL button events drive state machine (pressed→LISTENING, released→THINKING)
+- `main.py`: launches `http_api_server_v2.py` (was pointing to V1 `http_api_server.py`)
 
-**Next step**: Integrate IPC/HTTP server — fix the mismatch between `http_api_server_v2.py` (sends V1-style `{"cmd": "screen", "name": "..."}` commands) and `cmd_parser.c` (only handles `{"cmd": "set_state", "state": "..."}`). Also fix `main.py` which still points to old `http_api_server.py`.
+**Next step**: Connect the MacBook AI pipeline — when THINKING state is entered (CTRL released), send recorded audio to MacBook for STT → LLM → TTS, then set SPEAKING state with response text, then IDLE when playback completes.
 
 ---
 

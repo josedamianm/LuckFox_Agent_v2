@@ -4,6 +4,9 @@ import threading
 import time
 
 
+VALID_STATES = ("idle", "listening", "thinking", "speaking", "error")
+
+
 class GUIClient:
     SOCK_PATH = "/tmp/luckfox_gui.sock"
     RECONNECT_DELAY = 0.5
@@ -14,6 +17,7 @@ class GUIClient:
         self._event_cb = event_callback
         self._reader_thread = None
         self._running = True
+        self._current_state = "idle"
         self._connect()
 
     def _connect(self):
@@ -47,21 +51,18 @@ class GUIClient:
                 except OSError:
                     pass
 
-    def switch_screen(self, name, **kwargs):
-        self.send_cmd({"cmd": "screen", "name": name, **kwargs})
+    def set_state(self, state, text=None):
+        if state not in VALID_STATES:
+            return
+        cmd = {"cmd": "set_state", "state": state}
+        if text:
+            cmd["text"] = text
+        self.send_cmd(cmd)
+        self._current_state = state
 
-    def set_eyes_gaze(self, zone):
-        self.send_cmd({"cmd": "eyes_gaze", "zone": zone})
-
-    def set_eyes_blink(self):
-        self.send_cmd({"cmd": "eyes_blink"})
-
-    def send_image(self, path, width=240, height=240):
-        self.send_cmd({"cmd": "image", "path": path,
-                       "width": width, "height": height})
-
-    def get_state(self):
-        self.send_cmd({"cmd": "get_state"})
+    @property
+    def state(self):
+        return self._current_state
 
     def stop(self):
         self._running = False

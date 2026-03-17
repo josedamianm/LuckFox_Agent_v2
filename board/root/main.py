@@ -1,7 +1,7 @@
 import subprocess, time, os
 
 GUI_BIN = "/root/Executables/luckfox_gui"
-SERVER  = "/mnt/sdcard/http_api_server.py"
+SERVER  = "/mnt/sdcard/http_api_server_v2.py"
 
 if os.path.isfile(GUI_BIN):
     subprocess.Popen(
@@ -13,6 +13,6 @@ if os.path.isfile(GUI_BIN):
 
 subprocess.Popen(
     ["python3", SERVER],
-    stdout=open("/tmp/http_api_server.log", "w"),
+    stdout=open("/tmp/http_api_server_v2.log", "w"),
     stderr=subprocess.STDOUT
 )
