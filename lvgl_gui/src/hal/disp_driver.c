@@ -31,8 +31,6 @@ static int      gpio_dc   = -1;
 static int      gpio_rst  = -1;
 static int      gpio_bl   = -1;
 static uint8_t *g_capture_buf = NULL;
-static int gpio_rst  = -1;
-static int gpio_bl   = -1;
 
 /* ── GPIO sysfs helpers ─────────────────────────────────────────── */
 static int gpio_open(int pin, const char *dir) {
