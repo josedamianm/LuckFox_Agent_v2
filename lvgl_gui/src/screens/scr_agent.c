@@ -38,7 +38,6 @@ static lv_obj_t *g_label_date;
 static lv_obj_t *g_label_ip;
 
 static uint32_t g_last_clock_ms = 0;
-static uint32_t g_last_refr_ms  = 0;
 
 /* ------------------------------------------------------------------ */
 
@@ -270,7 +269,7 @@ void agent_screen_init(void) {
     build_error(scr);
 
     g_last_clock_ms = lv_tick_get();
-    g_last_refr_ms  = lv_tick_get();
+    clock_timer_cb(NULL);
 
     agent_set_state(AGENT_IDLE, NULL);
 }
@@ -358,10 +357,5 @@ void agent_tick(void) {
         for (int i = 0; i < DOT_COUNT; i++)
             lv_obj_set_style_bg_opa(g_dots[i],
                 i == active ? LV_OPA_COVER : LV_OPA_30, 0);
-    }
-
-    if ((now - g_last_refr_ms) >= 33u) {
-        g_last_refr_ms = now;
-        lv_refr_now(NULL);
     }
 }
