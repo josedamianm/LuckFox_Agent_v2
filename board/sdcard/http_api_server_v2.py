@@ -58,7 +58,7 @@ def on_button_event(msg):
     state = msg.get("state")
     print(f"[btn] {name} {state}")
 
-    if name == "CTRL":
+    if name == "A":
         if state == "pressed":
             gui.set_state("listening")
         elif state == "released":

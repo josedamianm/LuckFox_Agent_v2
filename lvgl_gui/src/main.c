@@ -13,7 +13,9 @@
 #define IPC_SOCK_PATH "/tmp/luckfox_gui.sock"
 
 #define BTN_COUNT  9
-#define BTN_CTRL   8
+#define BTN_A      0
+#define BTN_LEFT   6
+#define BTN_RIGHT  7
 
 static const int  btn_gpios[BTN_COUNT] = {57, 69, 65, 67, 55, 64, 68, 66, 54};
 static const char *btn_names[BTN_COUNT] = {"A","B","X","Y","UP","DOWN","LEFT","RIGHT","CTRL"};
@@ -59,6 +61,9 @@ static void gpio_poll_buttons(void) {
         bool pressed = (c == '0');
 
         if (pressed != btn_prev[i]) {
+            if (pressed && i == BTN_LEFT)  agent_idle_nav(-1);
+            if (pressed && i == BTN_RIGHT) agent_idle_nav(+1);
+
             char msg[128];
             snprintf(msg, sizeof(msg),
                      "{\"event\":\"button\",\"name\":\"%s\",\"state\":\"%s\"}",

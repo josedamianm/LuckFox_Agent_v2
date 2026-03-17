@@ -1,5 +1,6 @@
 #include "scr_agent.h"
 #include "lvgl.h"
+#include "../faces/kawaii_face.h"
 #include <string.h>
 
 #define COLOR_BG        0x000000
@@ -20,16 +21,23 @@
 #define DOT_SIZE        14
 #define DOT_GAP         20
 
-static agent_state_t g_state = AGENT_IDLE;
-static uint32_t      g_tick  = 0;
+#define IDLE_PAGE_COUNT 3
+
+static agent_state_t g_state     = AGENT_IDLE;
+static uint32_t      g_tick      = 0;
+static int           g_idle_page = 0;
 
 static lv_obj_t *g_containers[5];
+static lv_obj_t *g_idle_containers[IDLE_PAGE_COUNT];
+static lv_obj_t *g_idle_page_dots[IDLE_PAGE_COUNT];
 
 static lv_obj_t *g_speak_text;
 static lv_obj_t *g_error_text;
 static lv_obj_t *g_bars[BAR_COUNT];
 static lv_obj_t *g_spinner;
 static lv_obj_t *g_dots[DOT_COUNT];
+
+
 
 static int tri_wave(int t, int period) {
     t = ((t % period) + period) % period;
@@ -40,6 +48,19 @@ static int tri_wave(int t, int period) {
 static lv_obj_t *make_container(lv_obj_t *parent) {
     lv_obj_t *c = lv_obj_create(parent);
     lv_obj_set_size(c, 240, 240);
+    lv_obj_set_pos(c, 0, 0);
+    lv_obj_set_style_bg_color(c, lv_color_hex(COLOR_BG), 0);
+    lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(c, 0, 0);
+    lv_obj_set_style_pad_all(c, 0, 0);
+    lv_obj_set_style_radius(c, 0, 0);
+    lv_obj_add_flag(c, LV_OBJ_FLAG_HIDDEN);
+    return c;
+}
+
+static lv_obj_t *make_idle_subpage(lv_obj_t *parent) {
+    lv_obj_t *c = lv_obj_create(parent);
+    lv_obj_set_size(c, 240, 220);
     lv_obj_set_pos(c, 0, 0);
     lv_obj_set_style_bg_color(c, lv_color_hex(COLOR_BG), 0);
     lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
@@ -66,12 +87,73 @@ static lv_obj_t *make_label(lv_obj_t *parent, const char *text,
     return l;
 }
 
+static void build_idle_main(lv_obj_t *parent) {
+    lv_obj_t *c = g_idle_containers[0] = make_idle_subpage(parent);
+    make_label(c, "PepeBotL1", &lv_font_montserrat_32,
+               lv_color_hex(COLOR_WHITE), 70, 220);
+    make_label(c, "Press A to start", &lv_font_montserrat_16,
+               lv_color_hex(COLOR_GRAY), 124, 220);
+}
+
+static void build_idle_status(lv_obj_t *parent) {
+    lv_obj_t *c = g_idle_containers[1] = make_idle_subpage(parent);
+    make_label(c, "STATUS", &lv_font_montserrat_16,
+               lv_color_hex(COLOR_GRAY), 10, 220);
+    make_label(c, "PepeBotL1", &lv_font_montserrat_24,
+               lv_color_hex(COLOR_WHITE), 42, 220);
+    make_label(c, "System Ready", &lv_font_montserrat_16,
+               lv_color_hex(COLOR_GREEN), 84, 220);
+    make_label(c, "Press A to listen", &lv_font_montserrat_12,
+               lv_color_hex(COLOR_GRAY), 140, 220);
+    make_label(c, "< LEFT / RIGHT >", &lv_font_montserrat_12,
+               lv_color_hex(COLOR_DIM), 170, 220);
+}
+
+static void build_idle_eyes(lv_obj_t *parent) {
+    lv_obj_t *c = g_idle_containers[2] = make_idle_subpage(parent);
+
+    lv_obj_t *face_panel = lv_obj_create(c);
+    lv_obj_set_size(face_panel, 200, 200);
+    lv_obj_set_pos(face_panel, 20, 0);
+    lv_obj_set_style_bg_opa(face_panel, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(face_panel, 0, 0);
+    lv_obj_set_style_pad_all(face_panel, 0, 0);
+    lv_obj_clear_flag(face_panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    kawaii_cfg_t kfg = {
+        .parent     = face_panel,
+        .anim_ms    = 30,
+        .blink_ms   = 3000,
+        .auto_blink = true,
+    };
+    kawaii_init(&kfg);
+    kawaii_set_emotion(FACE_NEUTRAL, false);
+
+    make_label(c, "< LEFT / RIGHT >", &lv_font_montserrat_12,
+               lv_color_hex(COLOR_DIM), 208, 220);
+}
+
 static void build_idle(lv_obj_t *parent) {
     lv_obj_t *c = g_containers[AGENT_IDLE] = make_container(parent);
-    make_label(c, "LUCKFOX AGENT", &lv_font_montserrat_32,
-               lv_color_hex(COLOR_WHITE), 88, 220);
-    make_label(c, "Press CTRL to start", &lv_font_montserrat_16,
-               lv_color_hex(COLOR_GRAY), 138, 220);
+
+    for (int i = 0; i < IDLE_PAGE_COUNT; i++) {
+        lv_obj_t *dot = lv_obj_create(c);
+        lv_obj_set_size(dot, 6, 6);
+        lv_obj_set_style_radius(dot, 3, 0);
+        lv_obj_set_style_border_width(dot, 0, 0);
+        lv_obj_set_style_bg_color(dot, lv_color_hex(COLOR_GRAY), 0);
+        lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+        lv_obj_set_pos(dot, 108 + i * 14, 228);
+        g_idle_page_dots[i] = dot;
+    }
+
+    build_idle_main(c);
+    build_idle_status(c);
+    build_idle_eyes(c);
+
+    g_idle_page = 0;
+    lv_obj_remove_flag(g_idle_containers[0], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_bg_color(g_idle_page_dots[0], lv_color_hex(COLOR_WHITE), 0);
 }
 
 static void build_listening(lv_obj_t *parent) {
@@ -91,7 +173,7 @@ static void build_listening(lv_obj_t *parent) {
         lv_obj_set_y(bar, 170 - BAR_MIN_H);
         g_bars[i] = bar;
     }
-    make_label(c, "Release CTRL to process", &lv_font_montserrat_12,
+    make_label(c, "Release A to process", &lv_font_montserrat_12,
                lv_color_hex(COLOR_GRAY), 200, 220);
 }
 
@@ -187,6 +269,16 @@ void agent_set_state(agent_state_t state, const char *text) {
         lv_obj_add_flag(g_containers[i], LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(g_containers[state], LV_OBJ_FLAG_HIDDEN);
 
+    if (state == AGENT_IDLE) {
+        for (int i = 0; i < IDLE_PAGE_COUNT; i++) {
+            lv_obj_add_flag(g_idle_containers[i], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_style_bg_color(g_idle_page_dots[i], lv_color_hex(COLOR_GRAY), 0);
+        }
+        g_idle_page = 0;
+        lv_obj_remove_flag(g_idle_containers[0], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_style_bg_color(g_idle_page_dots[0], lv_color_hex(COLOR_WHITE), 0);
+    }
+
     if (state == AGENT_SPEAKING && text && *text)
         lv_label_set_text(g_speak_text, text);
     else if (state == AGENT_SPEAKING)
@@ -196,6 +288,29 @@ void agent_set_state(agent_state_t state, const char *text) {
         lv_label_set_text(g_error_text, text);
     else if (state == AGENT_ERROR)
         lv_label_set_text(g_error_text, "Unknown error");
+
+    switch (state) {
+        case AGENT_IDLE:       kawaii_set_emotion(FACE_NEUTRAL,      true); break;
+        case AGENT_LISTENING:  kawaii_set_emotion(FACE_SURPRISED,    true); break;
+        case AGENT_THINKING:   kawaii_set_emotion(FACE_WORKING_HARD, true); break;
+        case AGENT_SPEAKING:   kawaii_set_emotion(FACE_HAPPY,        true); break;
+        case AGENT_ERROR:      kawaii_set_emotion(FACE_SAD,          true); break;
+        default: break;
+    }
+
+    lv_refr_now(NULL);
+}
+
+void agent_idle_nav(int dir) {
+    if (g_state != AGENT_IDLE) return;
+
+    lv_obj_add_flag(g_idle_containers[g_idle_page], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_bg_color(g_idle_page_dots[g_idle_page], lv_color_hex(COLOR_GRAY), 0);
+
+    g_idle_page = (g_idle_page + dir + IDLE_PAGE_COUNT) % IDLE_PAGE_COUNT;
+
+    lv_obj_remove_flag(g_idle_containers[g_idle_page], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_bg_color(g_idle_page_dots[g_idle_page], lv_color_hex(COLOR_WHITE), 0);
 
     lv_refr_now(NULL);
 }

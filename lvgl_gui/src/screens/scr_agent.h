@@ -11,6 +11,7 @@ typedef enum {
 
 void agent_screen_init(void);
 void agent_set_state(agent_state_t state, const char *text);
+void agent_idle_nav(int dir);
 void agent_tick(void);
 
 #endif
