@@ -2,26 +2,24 @@
 #include "lvgl.h"
 #include "../faces/kawaii_face.h"
 #include <string.h>
+#include <time.h>
+#include <stdio.h>
+#include <ifaddrs.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 #define COLOR_BG        0x000000
 #define COLOR_WHITE     0xFFFFFF
 #define COLOR_GRAY      0x888888
 #define COLOR_GREEN     0x00FF80
-#define COLOR_ORANGE    0xFF8800
 #define COLOR_CYAN      0x00CCFF
 #define COLOR_RED       0xFF3333
-#define COLOR_DIM       0x333333
+#define COLOR_DIM       0x444444
 
-#define BAR_COUNT       7
-#define BAR_W           18
-#define BAR_GAP         8
-#define BAR_MIN_H       12
-#define BAR_MAX_H       60
+#define IDLE_PAGE_COUNT 2
 #define DOT_COUNT       3
 #define DOT_SIZE        14
 #define DOT_GAP         20
-
-#define IDLE_PAGE_COUNT 3
 
 static agent_state_t g_state     = AGENT_IDLE;
 static uint32_t      g_tick      = 0;
@@ -33,17 +31,50 @@ static lv_obj_t *g_idle_page_dots[IDLE_PAGE_COUNT];
 
 static lv_obj_t *g_speak_text;
 static lv_obj_t *g_error_text;
-static lv_obj_t *g_bars[BAR_COUNT];
-static lv_obj_t *g_spinner;
 static lv_obj_t *g_dots[DOT_COUNT];
 
+static lv_obj_t *g_label_time;
+static lv_obj_t *g_label_date;
+static lv_obj_t *g_label_ip;
 
+static lv_timer_t *g_clock_timer;
 
-static int tri_wave(int t, int period) {
-    t = ((t % period) + period) % period;
-    int half = period / 2;
-    return (t < half) ? t : (period - 1 - t);
+/* ------------------------------------------------------------------ */
+
+static void get_private_ip(char *buf, size_t len)
+{
+    struct ifaddrs *ifaddr, *ifa;
+    buf[0] = '\0';
+    if (getifaddrs(&ifaddr) == -1) {
+        snprintf(buf, len, "---");
+        return;
+    }
+    for (ifa = ifaddr; ifa; ifa = ifa->ifa_next) {
+        if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET) continue;
+        if (strcmp(ifa->ifa_name, "lo") == 0) continue;
+        struct sockaddr_in *sa = (struct sockaddr_in *)ifa->ifa_addr;
+        inet_ntop(AF_INET, &sa->sin_addr, buf, (socklen_t)len);
+        break;
+    }
+    freeifaddrs(ifaddr);
+    if (buf[0] == '\0') snprintf(buf, len, "---");
 }
+
+static void clock_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    time_t now = time(NULL);
+    struct tm *tm = localtime(&now);
+    char tbuf[12], dbuf[20], ipbuf[20];
+    strftime(tbuf, sizeof tbuf, "%H:%M:%S", tm);
+    strftime(dbuf, sizeof dbuf, "%a %d %b %Y", tm);
+    get_private_ip(ipbuf, sizeof ipbuf);
+    lv_label_set_text(g_label_time, tbuf);
+    lv_label_set_text(g_label_date, dbuf);
+    lv_label_set_text(g_label_ip, ipbuf);
+}
+
+/* ------------------------------------------------------------------ */
 
 static lv_obj_t *make_container(lv_obj_t *parent) {
     lv_obj_t *c = lv_obj_create(parent);
@@ -60,7 +91,7 @@ static lv_obj_t *make_container(lv_obj_t *parent) {
 
 static lv_obj_t *make_idle_subpage(lv_obj_t *parent) {
     lv_obj_t *c = lv_obj_create(parent);
-    lv_obj_set_size(c, 240, 220);
+    lv_obj_set_size(c, 240, 228);
     lv_obj_set_pos(c, 0, 0);
     lv_obj_set_style_bg_color(c, lv_color_hex(COLOR_BG), 0);
     lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
@@ -87,35 +118,45 @@ static lv_obj_t *make_label(lv_obj_t *parent, const char *text,
     return l;
 }
 
-static void build_idle_main(lv_obj_t *parent) {
-    lv_obj_t *c = g_idle_containers[0] = make_idle_subpage(parent);
-    make_label(c, "PepeBotL1", &lv_font_montserrat_32,
-               lv_color_hex(COLOR_WHITE), 70, 220);
-    make_label(c, "Press A to start", &lv_font_montserrat_16,
-               lv_color_hex(COLOR_GRAY), 124, 220);
-}
-
+/* ------------------------------------------------------------------ */
+/* Page 0 — Status: Date, Time, IP                                     */
+/* ------------------------------------------------------------------ */
 static void build_idle_status(lv_obj_t *parent) {
-    lv_obj_t *c = g_idle_containers[1] = make_idle_subpage(parent);
-    make_label(c, "STATUS", &lv_font_montserrat_16,
-               lv_color_hex(COLOR_GRAY), 10, 220);
-    make_label(c, "PepeBotL1", &lv_font_montserrat_24,
-               lv_color_hex(COLOR_WHITE), 42, 220);
-    make_label(c, "System Ready", &lv_font_montserrat_16,
-               lv_color_hex(COLOR_GREEN), 84, 220);
-    make_label(c, "Press A to listen", &lv_font_montserrat_12,
-               lv_color_hex(COLOR_GRAY), 140, 220);
+    lv_obj_t *c = g_idle_containers[0] = make_idle_subpage(parent);
+
+    make_label(c, "PepeBotL1", &lv_font_montserrat_20,
+               lv_color_hex(COLOR_GREEN), 8, 220);
+
+    make_label(c, "divider", &lv_font_montserrat_12,
+               lv_color_hex(COLOR_DIM), 34, 220);
+
+    g_label_time = make_label(c, "--:--:--", &lv_font_montserrat_48,
+                              lv_color_hex(COLOR_WHITE), 48, 220);
+
+    g_label_date = make_label(c, "--- -- --- ----", &lv_font_montserrat_16,
+                              lv_color_hex(COLOR_GRAY), 108, 220);
+
+    make_label(c, "IP", &lv_font_montserrat_12,
+               lv_color_hex(COLOR_DIM), 138, 220);
+
+    g_label_ip = make_label(c, "---", &lv_font_montserrat_20,
+                            lv_color_hex(COLOR_CYAN), 155, 220);
+
     make_label(c, "< LEFT / RIGHT >", &lv_font_montserrat_12,
-               lv_color_hex(COLOR_DIM), 170, 220);
+               lv_color_hex(COLOR_DIM), 210, 220);
 }
 
+/* ------------------------------------------------------------------ */
+/* Page 1 — Kawaii eyes                                                */
+/* ------------------------------------------------------------------ */
 static void build_idle_eyes(lv_obj_t *parent) {
-    lv_obj_t *c = g_idle_containers[2] = make_idle_subpage(parent);
+    lv_obj_t *c = g_idle_containers[1] = make_idle_subpage(parent);
 
     lv_obj_t *face_panel = lv_obj_create(c);
-    lv_obj_set_size(face_panel, 200, 200);
-    lv_obj_set_pos(face_panel, 20, 0);
-    lv_obj_set_style_bg_opa(face_panel, LV_OPA_TRANSP, 0);
+    lv_obj_set_size(face_panel, 220, 220);
+    lv_obj_set_pos(face_panel, 10, 4);
+    lv_obj_set_style_bg_color(face_panel, lv_color_hex(COLOR_BG), 0);
+    lv_obj_set_style_bg_opa(face_panel, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(face_panel, 0, 0);
     lv_obj_set_style_pad_all(face_panel, 0, 0);
     lv_obj_clear_flag(face_panel, LV_OBJ_FLAG_SCROLLABLE);
@@ -130,12 +171,17 @@ static void build_idle_eyes(lv_obj_t *parent) {
     kawaii_set_emotion(FACE_NEUTRAL, false);
 
     make_label(c, "< LEFT / RIGHT >", &lv_font_montserrat_12,
-               lv_color_hex(COLOR_DIM), 208, 220);
+               lv_color_hex(COLOR_DIM), 212, 220);
 }
 
+/* ------------------------------------------------------------------ */
+/* build_idle — container with 2 pages + dots                          */
+/* ------------------------------------------------------------------ */
 static void build_idle(lv_obj_t *parent) {
     lv_obj_t *c = g_containers[AGENT_IDLE] = make_container(parent);
 
+    int dot_total_w = IDLE_PAGE_COUNT * 6 + (IDLE_PAGE_COUNT - 1) * 10;
+    int dot_start   = (240 - dot_total_w) / 2;
     for (int i = 0; i < IDLE_PAGE_COUNT; i++) {
         lv_obj_t *dot = lv_obj_create(c);
         lv_obj_set_size(dot, 6, 6);
@@ -143,11 +189,10 @@ static void build_idle(lv_obj_t *parent) {
         lv_obj_set_style_border_width(dot, 0, 0);
         lv_obj_set_style_bg_color(dot, lv_color_hex(COLOR_GRAY), 0);
         lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
-        lv_obj_set_pos(dot, 108 + i * 14, 228);
+        lv_obj_set_pos(dot, dot_start + i * 16, 230);
         g_idle_page_dots[i] = dot;
     }
 
-    build_idle_main(c);
     build_idle_status(c);
     build_idle_eyes(c);
 
@@ -156,49 +201,9 @@ static void build_idle(lv_obj_t *parent) {
     lv_obj_set_style_bg_color(g_idle_page_dots[0], lv_color_hex(COLOR_WHITE), 0);
 }
 
-static void build_listening(lv_obj_t *parent) {
-    lv_obj_t *c = g_containers[AGENT_LISTENING] = make_container(parent);
-    make_label(c, "Listening...", &lv_font_montserrat_24,
-               lv_color_hex(COLOR_GREEN), 14, 220);
-    int total_w = BAR_COUNT * BAR_W + (BAR_COUNT - 1) * BAR_GAP;
-    int start_x = (240 - total_w) / 2;
-    for (int i = 0; i < BAR_COUNT; i++) {
-        lv_obj_t *bar = lv_obj_create(c);
-        lv_obj_set_style_bg_color(bar, lv_color_hex(COLOR_GREEN), 0);
-        lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_width(bar, 0, 0);
-        lv_obj_set_style_radius(bar, 4, 0);
-        lv_obj_set_size(bar, BAR_W, BAR_MIN_H);
-        lv_obj_set_x(bar, start_x + i * (BAR_W + BAR_GAP));
-        lv_obj_set_y(bar, 170 - BAR_MIN_H);
-        g_bars[i] = bar;
-    }
-    make_label(c, "Release A to process", &lv_font_montserrat_12,
-               lv_color_hex(COLOR_GRAY), 200, 220);
-}
-
-static void build_thinking(lv_obj_t *parent) {
-    lv_obj_t *c = g_containers[AGENT_THINKING] = make_container(parent);
-    lv_obj_t *arc = lv_arc_create(c);
-    lv_obj_set_size(arc, 100, 100);
-    lv_obj_set_pos(arc, 70, 70);
-    lv_arc_set_range(arc, 0, 360);
-    lv_arc_set_bg_angles(arc, 0, 360);
-    lv_obj_set_style_arc_color(arc, lv_color_hex(COLOR_DIM), LV_PART_MAIN);
-    lv_obj_set_style_arc_width(arc, 8, LV_PART_MAIN);
-    lv_obj_set_style_arc_color(arc, lv_color_hex(COLOR_ORANGE), LV_PART_INDICATOR);
-    lv_obj_set_style_arc_width(arc, 8, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_opa(arc, LV_OPA_TRANSP, LV_PART_KNOB);
-    lv_obj_set_style_pad_all(arc, 0, LV_PART_KNOB);
-    lv_obj_set_style_size(arc, 0, 0, LV_PART_KNOB);
-    lv_obj_clear_flag(arc, LV_OBJ_FLAG_CLICKABLE);
-    lv_arc_set_start_angle(arc, 0);
-    lv_arc_set_end_angle(arc, 90);
-    g_spinner = arc;
-    make_label(c, "Thinking...", &lv_font_montserrat_24,
-               lv_color_hex(COLOR_ORANGE), 182, 220);
-}
-
+/* ------------------------------------------------------------------ */
+/* Speaking                                                            */
+/* ------------------------------------------------------------------ */
 static void build_speaking(lv_obj_t *parent) {
     lv_obj_t *c = g_containers[AGENT_SPEAKING] = make_container(parent);
     make_label(c, "Speaking...", &lv_font_montserrat_24,
@@ -215,7 +220,7 @@ static void build_speaking(lv_obj_t *parent) {
     lv_obj_set_y(txt, 56);
     lv_obj_set_height(txt, 140);
     g_speak_text = txt;
-    int dots_total = DOT_COUNT * DOT_SIZE + (DOT_COUNT - 1) * DOT_GAP;
+    int dots_total  = DOT_COUNT * DOT_SIZE + (DOT_COUNT - 1) * DOT_GAP;
     int dot_start_x = (240 - dots_total) / 2;
     for (int i = 0; i < DOT_COUNT; i++) {
         lv_obj_t *dot = lv_obj_create(c);
@@ -230,6 +235,9 @@ static void build_speaking(lv_obj_t *parent) {
     }
 }
 
+/* ------------------------------------------------------------------ */
+/* Error                                                               */
+/* ------------------------------------------------------------------ */
 static void build_error(lv_obj_t *parent) {
     lv_obj_t *c = g_containers[AGENT_ERROR] = make_container(parent);
     make_label(c, "!", &lv_font_montserrat_48,
@@ -247,16 +255,21 @@ static void build_error(lv_obj_t *parent) {
     g_error_text = msg;
 }
 
+/* ------------------------------------------------------------------ */
+
 void agent_screen_init(void) {
     lv_obj_t *scr = lv_screen_active();
     lv_obj_set_style_bg_color(scr, lv_color_hex(COLOR_BG), 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
 
     build_idle(scr);
-    build_listening(scr);
-    build_thinking(scr);
+    g_containers[AGENT_LISTENING] = g_containers[AGENT_IDLE];
+    g_containers[AGENT_THINKING]  = g_containers[AGENT_IDLE];
     build_speaking(scr);
     build_error(scr);
+
+    g_clock_timer = lv_timer_create(clock_timer_cb, 1000, NULL);
+    lv_timer_ready(g_clock_timer);
 
     agent_set_state(AGENT_IDLE, NULL);
 }
@@ -265,18 +278,31 @@ void agent_set_state(agent_state_t state, const char *text) {
     g_state = state;
     g_tick  = 0;
 
-    for (int i = 0; i < 5; i++)
-        lv_obj_add_flag(g_containers[i], LV_OBJ_FLAG_HIDDEN);
-    lv_obj_remove_flag(g_containers[state], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(g_containers[AGENT_IDLE],     LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(g_containers[AGENT_SPEAKING], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(g_containers[AGENT_ERROR],    LV_OBJ_FLAG_HIDDEN);
 
-    if (state == AGENT_IDLE) {
-        for (int i = 0; i < IDLE_PAGE_COUNT; i++) {
-            lv_obj_add_flag(g_idle_containers[i], LV_OBJ_FLAG_HIDDEN);
-            lv_obj_set_style_bg_color(g_idle_page_dots[i], lv_color_hex(COLOR_GRAY), 0);
+    if (state == AGENT_IDLE || state == AGENT_LISTENING || state == AGENT_THINKING) {
+        lv_obj_remove_flag(g_containers[AGENT_IDLE], LV_OBJ_FLAG_HIDDEN);
+        if (state == AGENT_LISTENING || state == AGENT_THINKING) {
+            for (int i = 0; i < IDLE_PAGE_COUNT; i++) {
+                lv_obj_add_flag(g_idle_containers[i], LV_OBJ_FLAG_HIDDEN);
+                lv_obj_set_style_bg_color(g_idle_page_dots[i], lv_color_hex(COLOR_GRAY), 0);
+            }
+            g_idle_page = 1;
+            lv_obj_remove_flag(g_idle_containers[1], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_style_bg_color(g_idle_page_dots[1], lv_color_hex(COLOR_WHITE), 0);
+        } else {
+            for (int i = 0; i < IDLE_PAGE_COUNT; i++) {
+                lv_obj_add_flag(g_idle_containers[i], LV_OBJ_FLAG_HIDDEN);
+                lv_obj_set_style_bg_color(g_idle_page_dots[i], lv_color_hex(COLOR_GRAY), 0);
+            }
+            g_idle_page = 0;
+            lv_obj_remove_flag(g_idle_containers[0], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_style_bg_color(g_idle_page_dots[0], lv_color_hex(COLOR_WHITE), 0);
         }
-        g_idle_page = 0;
-        lv_obj_remove_flag(g_idle_containers[0], LV_OBJ_FLAG_HIDDEN);
-        lv_obj_set_style_bg_color(g_idle_page_dots[0], lv_color_hex(COLOR_WHITE), 0);
+    } else {
+        lv_obj_remove_flag(g_containers[state], LV_OBJ_FLAG_HIDDEN);
     }
 
     if (state == AGENT_SPEAKING && text && *text)
@@ -318,24 +344,7 @@ void agent_idle_nav(int dir) {
 void agent_tick(void) {
     g_tick++;
 
-    if (g_state == AGENT_LISTENING) {
-        int total_w = BAR_COUNT * BAR_W + (BAR_COUNT - 1) * BAR_GAP;
-        int start_x = (240 - total_w) / 2;
-        for (int i = 0; i < BAR_COUNT; i++) {
-            int t = (int)g_tick + i * 5;
-            int wave = tri_wave(t, 32);
-            int h = BAR_MIN_H + (wave * (BAR_MAX_H - BAR_MIN_H)) / 15;
-            int y = 170 - h;
-            lv_obj_set_size(g_bars[i], BAR_W, h);
-            lv_obj_set_x(g_bars[i], start_x + i * (BAR_W + BAR_GAP));
-            lv_obj_set_y(g_bars[i], y);
-        }
-    } else if (g_state == AGENT_THINKING) {
-        int start = (int)(g_tick * 4) % 360;
-        int end   = (start + 90) % 360;
-        lv_arc_set_start_angle(g_spinner, (uint16_t)start);
-        lv_arc_set_end_angle(g_spinner, (uint16_t)end);
-    } else if (g_state == AGENT_SPEAKING) {
+    if (g_state == AGENT_SPEAKING) {
         int active = (g_tick / 20) % DOT_COUNT;
         for (int i = 0; i < DOT_COUNT; i++)
             lv_obj_set_style_bg_opa(g_dots[i],
