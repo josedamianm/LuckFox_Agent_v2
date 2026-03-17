@@ -271,7 +271,7 @@ void agent_screen_init(void) {
     build_error(scr);
 
     lv_timer_t *clk = lv_timer_create(clock_timer_cb, 1000, NULL);
-    lv_timer_ready(clk);
+    clock_timer_cb(NULL);
 
     agent_set_state(AGENT_IDLE, NULL);
 }
