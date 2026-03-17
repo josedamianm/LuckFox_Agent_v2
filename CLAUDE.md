@@ -1,178 +1,316 @@
-# CLAUDE.md
+# CLAUDE.md — LuckFox Agent V2
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Single source of truth for AI agents working on this project.
 
-## Project Overview
+---
 
-LuckFox Agent V2 is a dual-process embedded GUI system for the **LuckFox Pico Max** (Rockchip RV1106, ARM Cortex-A7) with a 240×240 SPI display (Waveshare Pico LCD 1.3", ST7789). It consists of:
+## 1. Project Overview
 
-- **C binary** (`luckfox_gui`): Owns the Linux framebuffer (`/dev/fb0`) and drives LVGL v9 GUI
-- **Python HTTP API server**: Bridges external HTTP requests to the C binary via Unix Domain Socket IPC
-- **ESP32-C3 Arduino sketch**: Audio I2S receiver communicating over UART2
+LuckFox Agent V2 is a voice-activated AI agent running on the **LuckFox Pico Max** (Rockchip RV1106 / ARM Cortex-A7, 256MB DDR3). Two processes start at boot:
 
-## Build System
-
-The C binary uses CMake with a cross-compilation toolchain for ARM Cortex-A7.
-
-### Cross-compile (inside Docker `luckfox-crossdev:1.0`)
-
-```bash
-# First-time LVGL submodule setup
-git submodule add https://github.com/lvgl/lvgl.git lvgl_gui/lib/lvgl
-cd lvgl_gui/lib/lvgl && git checkout release/v9.2 && cd ../../..
-
-# Build
-mkdir -p lvgl_gui/build && cd lvgl_gui/build
-cmake .. -DCMAKE_TOOLCHAIN_FILE=../toolchain-rv1106.cmake -DCMAKE_BUILD_TYPE=Release
-make -j$(nproc)
-# Output: lvgl_gui/build/luckfox_gui
-```
-
-The toolchain (`toolchain-rv1106.cmake`) looks for the ARM compiler at `TOOLCHAIN_PATH`, `LUCKFOX_SDK`, or `/toolchain` (Docker default). Target flags: `-march=armv7-a -mfpu=neon-vfpv4 -mfloat-abi=hard -O2`.
-
-### Deployment
-
-```bash
-./sync.sh push    # rsync files to board at 192.168.1.60
-./sync.sh pull    # pull files from board
-./sync.sh diff    # show differences
-./sync.sh status  # show sync status
-```
-
-Board file locations:
-- Binary: `/usr/local/bin/luckfox_gui`
-- Python scripts: `/mnt/sdcard/`
-- Assets: `/mnt/sdcard/emoji/` and `/mnt/sdcard/images/`
-
-## Architecture
-
-### Dual-Process Communication
+- **`luckfox_gui`** (C binary): drives LVGL v9 GUI on a 240×240 ST7789 SPI display, owns the state machine visuals, emits button events over IPC
+- **`agent.py`** (Python): handles AI pipeline (STT → LLM → TTS), executes on MacBook via HTTP, drives the C binary state via IPC
 
 ```
-HTTP clients (port 8080)
+User presses CTRL button
         ↓
-http_api_server_v2.py  →  gui_client.py
-                               ↓
-                   /tmp/luckfox_gui.sock  (JSON, newline-delimited)
-                               ↓
-                        luckfox_gui (C binary)
-                               ↓
-                    LVGL → /dev/fb0 → ST7789 display
+luckfox_gui (C) → IPC event → agent.py (Python)
+                                    ↓
+                          HTTP → MacBook pipeline
+                          (audio → STT → LLM → TTS)
+                                    ↓
+                    IPC command → luckfox_gui (C)
+                                    ↓
+                        LVGL → SPI → ST7789 240×240
 ```
 
-### IPC Protocol
+---
 
-Newline-delimited JSON over Unix domain socket `/tmp/luckfox_gui.sock`:
-- Commands (Python → C): `{"cmd": "screen", "name": "status"}\n`
-- Events (C → Python): `{"event": "button", "name": "A", "state": "pressed"}\n`
+## 2. Agent State Machine
 
-### C Binary Structure (`lvgl_gui/src/`)
+Five states. The C binary renders the correct screen for each state. Python drives state transitions via IPC.
+
+| State | Trigger | Visual |
+|-------|---------|--------|
+| `IDLE` | Boot / pipeline complete | Logo + "Press CTRL to start" |
+| `LISTENING` | CTRL pressed | Mic/waveform animation, green |
+| `THINKING` | CTRL released | Spinner/dots, orange |
+| `SPEAKING` | LLM response ready | Response text + waveform, cyan |
+| `ERROR` | Any failure | Error message, red |
+
+### State Transitions
+
+```
+IDLE ──[CTRL press]──► LISTENING ──[CTRL release]──► THINKING
+                                                          │
+                                              [response ready]
+                                                          ▼
+IDLE ◄──[playback done]── SPEAKING ◄──[LLM done]── THINKING
+                                                          │
+IDLE ◄──────────────── ERROR ◄────────[any failure]──────┘
+```
+
+---
+
+## 3. Screen Layouts (240×240, dark background)
+
+### IDLE
+- Centered brand text: `"LUCKFOX AGENT"` — Montserrat 32px, white
+- Sub-text: `"Press CTRL to start"` — 16px, gray `#888888`
+- Background: pure black `#000000`
+
+### LISTENING
+- Top label: `"Listening..."` — 24px, green `#00FF80`
+- Center: 7 animated vertical waveform bars (ping-pong height animation), green `#00FF80`
+- Bottom label: `"Release CTRL to process"` — 14px, gray `#888888`
+
+### THINKING
+- Center: spinning arc animation (300° arc rotates), orange `#FF8800`
+- Label below spinner: `"Thinking..."` — 24px, orange `#FF8800`
+
+### SPEAKING
+- Top label: `"Speaking..."` — 24px, cyan `#00CCFF`
+- Center text area: response text (last ~120 chars that fit), 16px, white, word-wrap
+- Bottom: 3 animated pulsing dots, cyan `#00CCFF`
+
+### ERROR
+- Center: `"!"` symbol — 48px, red `#FF3333`
+- Below: error message text — 16px, red `#FF3333`, truncated to fit
+
+---
+
+## 4. IPC Protocol
+
+Newline-delimited JSON over Unix domain socket `/tmp/luckfox_gui.sock`.
+
+### Python → C (commands)
+
+```json
+{"cmd": "set_state", "state": "idle"}
+{"cmd": "set_state", "state": "listening"}
+{"cmd": "set_state", "state": "thinking"}
+{"cmd": "set_state", "state": "speaking", "text": "response text here"}
+{"cmd": "set_state", "state": "error", "text": "error message"}
+```
+
+### C → Python (events)
+
+```json
+{"event": "button", "name": "CTRL", "state": "pressed"}
+{"event": "button", "name": "CTRL", "state": "released"}
+```
+
+---
+
+## 5. C Binary Structure (`lvgl_gui/src/`)
 
 | Module | Role |
 |--------|------|
-| `main.c` | LVGL init, event loop (5ms tick), signal handling |
-| `hal/disp_driver.c` | Framebuffer flush to 240×240 RGB565 display |
-| `hal/indev_buttons.c` | 9 GPIO buttons → LVGL input events |
-| `ipc/ipc_server.c` | Unix socket server, up to 4 clients, non-blocking |
-| `ipc/cmd_parser.c` | JSON command → screen handler dispatch |
-| `screens/scr_manager.c` | Screen switching with 200ms fade animation |
-| `screens/scr_eyes.c` | Animated eyes with 9-zone gaze control |
-| `screens/scr_emoji.c` | PNG display from `/mnt/sdcard/emoji/` |
-| `screens/scr_chat.c` | AI Chat screen — 4 animated states (IDLE/LISTENING/THINKING/SPEAKING) |
-| `anim/eyes_anim.c` | Eye gaze/blink animations |
+| `main.c` | LVGL init, main loop, GPIO button polling, signal handling |
+| `hal/disp_driver.c` | ST7789 SPI driver — init, flush_cb (byte swap) |
+| `hal/disp_driver.h` | Public: `disp_driver_init()`, `disp_driver_deinit()` |
+| `ipc/ipc_server.c` | Unix socket server, non-blocking, up to 4 clients |
+| `ipc/ipc_server.h` | Public: `ipc_server_init()`, `ipc_server_poll()`, `ipc_broadcast()` |
+| `ipc/cmd_parser.c` | Parse `set_state` JSON → call `agent_set_state()` |
+| `ipc/cmd_parser.h` | Public: `cmd_parse()` |
+| `screens/scr_agent.c` | All 5 agent states in one file — `agent_set_state(state, text)` |
+| `screens/scr_agent.h` | Public: `agent_screen_init()`, `agent_set_state()`, `agent_tick()` |
 
-### Python Components (`board/sdcard/`)
+### `main.c` Main Loop Pattern
 
-- **`http_api_server_v2.py`**: HTTP API on port 8080. Key endpoints: `GET /api/mode/{status,eyes,chat}`, `POST /api/text`, `POST /api/image`, `POST /api/gif/frames`, `POST /api/audio/play`, `POST /api/chat/state`
-- **`gui_client.py`**: Thread-safe IPC client with auto-reconnect (0.5s backoff)
-- **`audio_sender.py`**: UART2 protocol to ESP32-C3 — binary framing with SYNC `0xAA55`, packet type, length, payload, XOR checksum @ 921600 baud
+```c
+lv_init();
+disp_driver_init();
+agent_screen_init();       // creates LVGL screen, sets IDLE state
+ipc_server_init();         // binds /tmp/luckfox_gui.sock
+gpio_buttons_init();       // export + set direction, init prev[] from reads
 
-### LVGL Configuration (`lvgl_gui/lv_conf.h`)
+while (running) {
+    ipc_server_poll();     // accept new clients, read commands, dispatch
+    gpio_poll_buttons();   // detect CTRL press/release → ipc_broadcast() event
+    agent_tick();          // drive animations (waveform bars, spinner, dots)
+    lv_timer_handler();    // LVGL render cycle
+    usleep(10000);         // 10ms = 100Hz loop
+}
+```
 
-- Color depth: 16-bit RGB565
-- Memory buffer: 48KB
-- DPI: 200, display size: 240×240
-- Enabled fonts: Montserrat 12, 16, 24, 32, 48
+### `scr_agent.c` Structure
 
-## Key Reference Docs
+Single LVGL screen with overlapping containers, one shown per state:
 
-- `ARCHITECTURE_V2_LVGL.md` — Full system design, IPC protocol spec, screen designs, boot sequence
-- `DEPLOY_GUIDE.md` — Docker cross-compile setup, board deployment, troubleshooting
-- `lvgl_gui/README.md` — LVGL submodule setup and build steps
+```c
+typedef enum { STATE_IDLE, STATE_LISTENING, STATE_THINKING, STATE_SPEAKING, STATE_ERROR } agent_state_t;
 
-## Screens
+void agent_screen_init(void);           // create all 5 state containers on one lv_screen
+void agent_set_state(agent_state_t s, const char *text);  // hide all, show target, start anim
+void agent_tick(void);                  // called every loop iteration — advance animations
+```
 
-Seven screen types managed by `scr_manager`: `STATUS`, `EYES`, `EMOJI`, `TEXT`, `IMAGE`, `MENU`, `CHAT`
+Animation approach (no LVGL anim timers, driven by `agent_tick()`):
+- **LISTENING bars**: 7 `lv_obj` rectangles, heights oscillate with per-bar phase offset, updated every tick
+- **THINKING spinner**: single `lv_arc`, start angle incremented by 4° per tick
+- **SPEAKING dots**: 3 circles, opacity pulses with phase offset per dot
 
-### AI Chat Screen (`SCR_CHAT`)
+---
 
-Four states driven by IPC commands or HTTP API:
+## 6. Hardware Configuration (Confirmed Working)
 
-| State | Value | Visual | Color |
-|-------|-------|--------|-------|
-| `CHAT_IDLE` | 0 | Large mic symbol + "HOLD BUTTON" | Gray `#444` |
-| `CHAT_LISTENING` | 1 | 7 animated waveform bars (ping-pong) | Green `#00FF80` |
-| `CHAT_THINKING` | 2 | Spinning partial arc (300° fill) | Orange `#FF8800` |
-| `CHAT_SPEAKING` | 3 | Scrolling response text + dot indicators | Cyan `#00CCFF` |
+### Display — ST7789 240×240
 
-IPC commands:
-- `{"cmd": "screen", "name": "chat"}` — navigate to chat screen
-- `{"cmd": "chat_state", "state": 0}` — set state (0–3)
-- `{"cmd": "chat_text", "text": "..."}` — set speaking text
+| Item | Value |
+|------|-------|
+| SPI device | `/dev/spidev0.0` @ 32MHz, `SPI_MODE_0` |
+| SPI transfer | `write()` syscall — `ioctl(SPI_IOC_MESSAGE)` silently fails on RK1106 |
+| DC GPIO | 73 |
+| RST GPIO | 51 |
+| BL GPIO | 72 |
+| MADCTL | `0x60` (90° landscape) |
+| Window offset | XOFF=80, YOFF=0 |
+| Color format | RGB565 big-endian — manual byte swap in `flush_cb` |
+| LVGL render mode | `LV_DISPLAY_RENDER_MODE_FULL`, single 240×240 buffer, `NULL` second buffer |
+| LVGL refresh | `lv_refr_now(NULL)` for immediate flush; `lv_timer_handler()` in main loop |
 
-HTTP endpoints:
-- `GET /api/mode/chat` — switch to chat screen
-- `POST /api/chat/state` — body: `{"state": 1, "text": "optional response text"}`
+### Buttons — 9 GPIO, active-low (idle=1, pressed=0)
 
-### Menu Screen (`SCR_MENU`)
+| Button | GPIO |
+|--------|------|
+| A | 57 |
+| B | 69 |
+| X | 65 |
+| Y | 67 |
+| UP | 55 |
+| DOWN | 64 |
+| LEFT | 68 |
+| RIGHT | 66 |
+| CTRL | 54 |
 
-6-card horizontal tileview (swipe or LEFT/RIGHT buttons, ENTER to enter):
-`Eyes → Status → Emoji → Text → Image → AI Chat`
+- GPIOs must be **exported** and set to `in` direction by the binary on every startup
+- Use **direct sysfs polling** in main loop (LVGL v9 keypad indev `read_cb` not polled without focused group)
+- Initialize `prev[]` state from actual GPIO reads to prevent false triggers on startup
+- Only CTRL button events are emitted over IPC (others reserved for future use)
 
-Dot indicator bar: 6 pills at bottom (active = 14px wide accent-colored, inactive = 7px gray).
+### Audio — ESP32-C3 via UART2
 
-### Design System
+| Item | Value |
+|------|-------|
+| Device | `/dev/ttyS2` |
+| Baud | 921600 |
+| Protocol | Binary: SYNC `0xAA55`, packet type, length, payload, XOR checksum |
+| LuckFox TX | GPIO42 (Pin1) → ESP32-C3 GPIO4 |
+| LuckFox RX | GPIO43 (Pin2) ← ESP32-C3 GPIO7 |
 
-Smartwatch-style, all screens use:
-- Pure black `#000000` background
-- Font scale: 48px primary value, 32px secondary, 24px labels, 16px body, 12px meta
-- One dominant element per screen, no persistent navigation chrome
-- `lv_font_montserrat_48` must be enabled in `lv_conf.h` (`LV_FONT_MONTSERRAT_48 1`)
+---
 
-## Board Hardware
+## 7. LVGL v9 Lessons Learned
 
-- **Display**: SPI0 (`/dev/spidev0.0`), enabled via `enable_spi0_spidev.dtbo`
-  - ST7789 240×240, MADCTL `0x60` (90° landscape), XOFF=80, YOFF=0
-  - SPI uses `write()` syscall (not `ioctl SPI_IOC_MESSAGE`) — required on RK1106
-  - RGB565 big-endian: manual byte swap done in `flush_cb`
-  - LVGL render mode: `LV_DISPLAY_RENDER_MODE_FULL` with single 240×240 buffer
-  - Refresh: call `lv_refr_now(NULL)` to force immediate flush after state changes
-- **Buttons**: 9 GPIO buttons, active-low (idle=1, pressed=0), sysfs polling
-  - A=GPIO57, B=GPIO69, X=GPIO65, Y=GPIO67
-  - UP=GPIO55, DOWN=GPIO64, LEFT=GPIO68, RIGHT=GPIO66, CTRL=GPIO54
-  - GPIOs must be exported and set to `in` direction by the binary on startup
-  - LVGL keypad indev `read_cb` not called in v9 — use direct sysfs polling in main loop
-- **Audio**: UART2 (`/dev/ttyS2`) → ESP32-C3 → I2S DAC
-  - TX=GPIO42 (Pin1) → ESP32-C3 GPIO4, RX=GPIO43 (Pin2) ← ESP32-C3 GPIO7, GND↔GND
-  - 921600 baud, binary framing: SYNC `0xAA55`, packet type, length, payload, XOR checksum
-- **Camera**: Captured via `board/executables/get_frame.c`
-- **Remote access**: frpc tunnel (`board/init.d/S98frpc`)
+- `lv_timer_handler()` **blocks** in partial render mode → must use `LV_DISPLAY_RENDER_MODE_FULL`
+- `LV_COLOR_16_SWAP 1` is a v8 macro, **silently ignored** in v9 → manual byte swap in `flush_cb`
+- `LV_COLOR_FORMAT_RGB565_SWAP` enum **does not exist** in this build → use `LV_COLOR_FORMAT_RGB565`
+- LVGL v9 keypad indev requires a focused group for `read_cb` to be polled → bypass with direct GPIO loop
+- Call `lv_refr_now(NULL)` after style/content changes to force immediate screen refresh
+- Prefer tick-driven animations in `agent_tick()` over LVGL anim timers for predictability
 
-## Current State (as of 2026-03-17)
+---
 
-The `main.c` is currently a **color-test binary** (not the full app) that validates display + all 9 buttons:
-- Boot: blue diagnostic flash → navy screen with button instructions label
-- Press A=Red, B=Blue, X=Yellow, Y=Green, UP=Orange, DOWN=Purple, LEFT=Cyan, RIGHT=White, CTRL=Magenta
-- Direct GPIO sysfs polling in main loop + `lv_refr_now(NULL)` on each button press
+## 8. LVGL Configuration (`lvgl_gui/lv_conf.h`)
 
-Next step: restore full app (IPC server, screen manager, HTTP agent integration).
+- `LV_COLOR_DEPTH 16` (RGB565)
+- `LV_COLOR_16_SWAP 0` (ignored in v9; byte swap done manually)
+- Buffer: 48KB, DPI: 200, display: 240×240
+- Fonts enabled: Montserrat 12, 16, 24, 32, 48
 
-## Known Issues / Lessons Learned
+---
 
-- `lv_timer_handler()` blocks in LVGL v9 partial render mode → use `LV_DISPLAY_RENDER_MODE_FULL`
-- `LV_COLOR_16_SWAP` is a v8 macro ignored by LVGL v9 → do manual byte swap in `flush_cb`
-- `LV_COLOR_FORMAT_RGB565_SWAP` enum does not exist in this build → use `LV_COLOR_FORMAT_RGB565`
-- LVGL v9 keypad indev `read_cb` not polled unless a focused group/object exists → bypass with direct GPIO polling
-- ST7789 on RK1106 spidev: `ioctl(SPI_IOC_MESSAGE)` fails silently → use `write()` syscall
-- GPIO buttons: export + set direction `in` on every startup (not persistent across reboots)
-- Initialize button `prev[]` state from actual GPIO reads to avoid false triggers on startup
+## 9. Build System
+
+### Cross-compile (macOS or Ubuntu + Docker)
+
+```bash
+cd lvgl_gui
+docker run --rm -v $(pwd):/work -w /work rv1106-toolchain make
+
+# Or full cmake flow inside container
+mkdir -p build && cd build
+cmake .. -DCMAKE_TOOLCHAIN_FILE=../toolchain-rv1106.cmake -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)
+# Output: lvgl_gui/build/luckfox_gui (ELF 32-bit ARM)
+```
+
+Toolchain: `arm-rockchip830-linux-uclibcgnueabihf-gcc`
+Flags: `-march=armv7-a -mfpu=neon-vfpv4 -mfloat-abi=hard -O2`
+Auto-detected from `TOOLCHAIN_PATH`, `LUCKFOX_SDK`, or `/toolchain`.
+
+### Deployment
+
+Board IP: **192.168.1.60**, user: **root**
+
+```bash
+./sync.sh          # rsync push to board
+./sync.sh pull     # pull from board
+./sync.sh diff     # show differences
+```
+
+Manual:
+```bash
+scp lvgl_gui/build/luckfox_gui root@192.168.1.60:/root/Executables/luckfox_gui
+ssh root@192.168.1.60 "killall luckfox_gui; /root/Executables/luckfox_gui"
+```
+
+### Board File Locations
+
+| Item | Path |
+|------|------|
+| Binary | `/root/Executables/luckfox_gui` |
+| Python scripts | `/mnt/sdcard/` |
+| IPC socket | `/tmp/luckfox_gui.sock` |
+| Autostart | `/etc/init.d/S99luckfox_agent` |
+
+### Autostart Script
+
+```sh
+#!/bin/sh
+start() {
+    /root/Executables/luckfox_gui &
+    sleep 2
+    python3 /mnt/sdcard/agent.py &
+}
+stop() { pkill luckfox_gui; pkill -f agent.py; }
+case "$1" in
+    start) start ;; stop) stop ;; restart) stop; sleep 1; start ;;
+esac
+```
+
+---
+
+## 10. Current Status
+
+`main.c` is currently a **color-test binary** — display and all 9 buttons validated:
+- Boot: blue diagnostic flash → navy screen with button label instructions
+- A=Red, B=Blue, X=Yellow, Y=Green, UP=Orange, DOWN=Purple, LEFT=Cyan, RIGHT=White, CTRL=Magenta
+
+**Implementation plan** (C binary first):
+1. Implement `screens/scr_agent.c` — 5 states, tick-driven animations
+2. Implement `ipc/ipc_server.c` + `ipc/cmd_parser.c` — set_state commands + CTRL button events
+3. Wire into `main.c` — replace color-test with agent state machine loop
+4. Build, deploy, test on hardware
+5. Implement Python `agent.py` — IPC client + MacBook HTTP pipeline
+
+---
+
+## 11. Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| Display stays red after boot | SPI not working — check `/dev/spidev0.0`; use `write()` not `ioctl` |
+| Blue flash then black screen | LVGL render issue — ensure `lv_init()` before `disp_driver_init()` |
+| Buttons not responding | Check GPIO export: `ls /sys/class/gpio/gpio57`; direction must be `in` |
+| False button trigger on startup | Initialize `prev[]` from actual GPIO reads before loop |
+| Text/image mirrored | Check MADCTL=`0x60`, XOFF=80, YOFF=0 |
+| IPC socket not found | `luckfox_gui` failed — run in foreground, check stderr |
+| `arm-rockchip830...: not found` | `export TOOLCHAIN_PATH=/toolchain/bin/arm-rockchip830-linux-uclibcgnueabihf-` |
+
+Monitor:
+```bash
+ssh root@192.168.1.60 "killall luckfox_gui; /root/Executables/luckfox_gui"
+dmesg | tail -30
+```
