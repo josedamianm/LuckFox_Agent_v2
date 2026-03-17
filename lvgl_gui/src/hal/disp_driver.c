@@ -152,15 +152,25 @@ static void flush_cb(lv_display_t *disp, const lv_area_t *area,
     int32_t h = lv_area_get_height(area);
     size_t len = (size_t)(w * h * 2);
 
-    for (size_t i = 0; i < len; i += 2) {
-        uint8_t tmp  = px_map[i];
-        px_map[i]    = px_map[i + 1];
-        px_map[i + 1] = tmp;
-    }
-
     set_window((uint16_t)area->x1, (uint16_t)area->y1,
                (uint16_t)area->x2, (uint16_t)area->y2);
-    lcd_data(px_map, len);
+
+    gpio_write(gpio_dc, 1);
+
+    const size_t CHUNK = 4096;
+    static uint8_t swap_buf[4096];
+    size_t offset = 0;
+    while (offset < len) {
+        size_t n = len - offset;
+        if (n > CHUNK) n = CHUNK;
+        if (n & 1) n--;
+        for (size_t j = 0; j < n; j += 2) {
+            swap_buf[j]     = px_map[offset + j + 1];
+            swap_buf[j + 1] = px_map[offset + j];
+        }
+        write(spi_fd, swap_buf, n);
+        offset += n;
+    }
 
     lv_display_flush_ready(disp);
 }

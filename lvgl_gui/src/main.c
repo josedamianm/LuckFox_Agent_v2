@@ -96,6 +96,7 @@ int main(void) {
         gpio_poll_buttons();
         agent_tick();
         lv_timer_handler();
+        lv_refr_now(NULL);
         usleep(10000);
     }
 
