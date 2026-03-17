@@ -26,8 +26,11 @@
 #define DRAW_BUF_LINES DISP_VER_RES
 static lv_color_t draw_buf_1[DISP_HOR_RES * DRAW_BUF_LINES];
 
-static int spi_fd    = -1;
-static int gpio_dc   = -1;
+static int      spi_fd    = -1;
+static int      gpio_dc   = -1;
+static int      gpio_rst  = -1;
+static int      gpio_bl   = -1;
+static uint8_t *g_capture_buf = NULL;
 static int gpio_rst  = -1;
 static int gpio_bl   = -1;
 
@@ -152,6 +155,16 @@ static void flush_cb(lv_display_t *disp, const lv_area_t *area,
     int32_t h = lv_area_get_height(area);
     size_t len = (size_t)(w * h * 2);
 
+    if (g_capture_buf) {
+        for (size_t j = 0; j < len; j += 2) {
+            g_capture_buf[j]     = px_map[j + 1];
+            g_capture_buf[j + 1] = px_map[j];
+        }
+        g_capture_buf = NULL;
+        lv_display_flush_ready(disp);
+        return;
+    }
+
     set_window((uint16_t)area->x1, (uint16_t)area->y1,
                (uint16_t)area->x2, (uint16_t)area->y2);
 
@@ -173,6 +186,17 @@ static void flush_cb(lv_display_t *disp, const lv_area_t *area,
     }
 
     lv_display_flush_ready(disp);
+}
+
+/* ── Capture / raw-playback API ─────────────────────────────────── */
+void disp_set_capture_buf(uint8_t *buf) {
+    g_capture_buf = buf;
+}
+
+void disp_send_raw_frame(const uint8_t *frame_bytes) {
+    set_window(0, 0, DISP_HOR_RES - 1, DISP_VER_RES - 1);
+    gpio_write(gpio_dc, 1);
+    spi_xfer(frame_bytes, (size_t)(DISP_HOR_RES * DISP_VER_RES * 2));
 }
 
 /* ── Public API ─────────────────────────────────────────────────── */

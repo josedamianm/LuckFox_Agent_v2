@@ -1,9 +1,11 @@
 #include "scr_agent.h"
 #include "lvgl.h"
 #include "../faces/kawaii_face.h"
+#include "../hal/disp_driver.h"
 #include <string.h>
 #include <time.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <ifaddrs.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -21,6 +23,10 @@
 #define DOT_SIZE        14
 #define DOT_GAP         20
 
+#define FACE_FRAME_COUNT  150
+#define FACE_FRAME_BYTES  (240 * 240 * 2)
+#define FACE_TICKS_PER_FRAME 3
+
 static agent_state_t g_state     = AGENT_IDLE;
 static uint32_t      g_tick      = 0;
 static int           g_idle_page = 0;
@@ -37,7 +43,10 @@ static lv_obj_t *g_label_time;
 static lv_obj_t *g_label_date;
 static lv_obj_t *g_label_ip;
 
-static uint32_t g_last_clock_ms = 0;
+static uint32_t g_last_clock_ms   = 0;
+static uint8_t *g_face_buf        = NULL;
+static int      g_face_frame_idx  = 0;
+static uint32_t g_face_frame_ms   = 0;
 
 /* ------------------------------------------------------------------ */
 
@@ -256,6 +265,40 @@ static void build_error(lv_obj_t *parent) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Pre-render face animation frames                                    */
+/* ------------------------------------------------------------------ */
+static void prerender_face_frames(void) {
+    g_face_buf = (uint8_t *)malloc((size_t)FACE_FRAME_COUNT * FACE_FRAME_BYTES);
+    if (!g_face_buf) {
+        fprintf(stderr, "[face] prerender alloc failed\n");
+        return;
+    }
+
+    lv_obj_add_flag(g_idle_containers[0], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(g_idle_containers[1], LV_OBJ_FLAG_HIDDEN);
+
+    kawaii_set_emotion(FACE_NEUTRAL, false);
+
+    for (int i = 0; i < FACE_FRAME_COUNT; i++) {
+        for (int t = 0; t < FACE_TICKS_PER_FRAME; t++)
+            kawaii_tick();
+        disp_set_capture_buf(g_face_buf + (size_t)i * FACE_FRAME_BYTES);
+        lv_obj_invalidate(g_containers[AGENT_IDLE]);
+        lv_timer_handler();
+        lv_refr_now(NULL);
+    }
+
+    lv_obj_add_flag(g_idle_containers[1], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(g_idle_containers[0], LV_OBJ_FLAG_HIDDEN);
+
+    g_face_frame_idx = 0;
+    g_face_frame_ms  = lv_tick_get();
+    fprintf(stderr, "[face] prerendered %d frames (%.1f MB)\n",
+            FACE_FRAME_COUNT,
+            (float)((size_t)FACE_FRAME_COUNT * FACE_FRAME_BYTES) / (1024.f * 1024.f));
+}
+
+/* ------------------------------------------------------------------ */
 
 void agent_screen_init(void) {
     lv_obj_t *scr = lv_screen_active();
@@ -272,6 +315,8 @@ void agent_screen_init(void) {
     clock_timer_cb(NULL);
 
     agent_set_state(AGENT_IDLE, NULL);
+
+    prerender_face_frames();
 }
 
 void agent_set_state(agent_state_t state, const char *text) {
@@ -324,6 +369,7 @@ void agent_set_state(agent_state_t state, const char *text) {
         default: break;
     }
 
+    lv_obj_invalidate(lv_screen_active());
     lv_refr_now(NULL);
 }
 
@@ -338,7 +384,13 @@ void agent_idle_nav(int dir) {
     lv_obj_remove_flag(g_idle_containers[g_idle_page], LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_style_bg_color(g_idle_page_dots[g_idle_page], lv_color_hex(COLOR_WHITE), 0);
 
+    lv_obj_invalidate(lv_screen_active());
     lv_refr_now(NULL);
+
+    if (g_idle_page == 1) {
+        g_face_frame_idx = 0;
+        g_face_frame_ms  = lv_tick_get();
+    }
 }
 
 void agent_tick(void) {
@@ -347,9 +399,22 @@ void agent_tick(void) {
 
     kawaii_tick();
 
+    if (g_state == AGENT_IDLE && g_idle_page == 1 && g_face_buf) {
+        if ((now - g_face_frame_ms) >= 30u) {
+            g_face_frame_ms = now;
+            disp_send_raw_frame(g_face_buf + (size_t)g_face_frame_idx * FACE_FRAME_BYTES);
+            g_face_frame_idx = (g_face_frame_idx + 1) % FACE_FRAME_COUNT;
+        }
+        return;
+    }
+
+    bool needs_refresh = false;
+
     if ((now - g_last_clock_ms) >= 1000u) {
         g_last_clock_ms = now;
         clock_timer_cb(NULL);
+        if (g_state == AGENT_IDLE && g_idle_page == 0)
+            needs_refresh = true;
     }
 
     if (g_state == AGENT_SPEAKING) {
@@ -357,5 +422,14 @@ void agent_tick(void) {
         for (int i = 0; i < DOT_COUNT; i++)
             lv_obj_set_style_bg_opa(g_dots[i],
                 i == active ? LV_OPA_COVER : LV_OPA_30, 0);
+        needs_refresh = true;
+    }
+
+    if (g_state == AGENT_LISTENING || g_state == AGENT_THINKING)
+        needs_refresh = true;
+
+    if (needs_refresh) {
+        lv_obj_invalidate(lv_screen_active());
+        lv_refr_now(NULL);
     }
 }

@@ -94,10 +94,8 @@ int main(void) {
     while (g_running) {
         ipc_server_poll();
         gpio_poll_buttons();
-        agent_tick();
         lv_timer_handler();
-        lv_obj_invalidate(lv_screen_active());
-        lv_refr_now(NULL);
+        agent_tick();
         usleep(10000);
     }
 
