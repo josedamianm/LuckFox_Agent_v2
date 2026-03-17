@@ -95,8 +95,8 @@ static void st7789_init(void) {
 
     lcd_cmd(0x3A); lcd_data_byte(0x55);  /* COLMOD: 16-bit RGB565 */
 
-    /* MADCTL: rotation=270 → 0xA0 */
-    lcd_cmd(0x36); lcd_data_byte(0xA0);
+    /* MADCTL: rotation=90 → 0x60 */
+    lcd_cmd(0x36); lcd_data_byte(0x60);
 
     /* Porch setting */
     lcd_cmd(0xB2);

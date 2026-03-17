@@ -56,7 +56,12 @@ int main(void) {
         fprintf(stderr, "[main] gpio%d fd=%d\n", btn_gpios[i], btn_fds[i]);
     }
 
-    bool prev[9] = {false};
+    bool prev[9];
+    for (int i = 0; i < 9; i++) {
+        char c = '1';
+        if (btn_fds[i] >= 0) { read(btn_fds[i], &c, 1); lseek(btn_fds[i], 0, SEEK_SET); }
+        prev[i] = (c == '0');
+    }
     fprintf(stderr, "color_test running\n");
 
     while (g_running) {
