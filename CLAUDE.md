@@ -42,6 +42,12 @@ luckfox_gui (C) → IPC event → Python HTTP server
 - `http_api_server_v2.py`: V2 agent state endpoints (`GET/POST /api/agent/state`), CTRL button events drive state machine (pressed→LISTENING, released→THINKING)
 - `main.py`: launches `http_api_server_v2.py` (was pointing to V1 `http_api_server.py`)
 
+**IDLE screen confirmed working on hardware (2026-03-17):**
+- Page 0 (Status): time updates every second, date and IP display correctly
+- Page 1 (Kawaii face): smooth animation, blink/bounce/emotion state machine working
+- LEFT/RIGHT buttons navigate between pages
+- Clock uses `time()`/`localtime()`/`strftime()` — pure C stdlib, no shell required
+
 **Next step**: Connect the MacBook AI pipeline — when THINKING state is entered (CTRL released), send recorded audio to MacBook for STT → LLM → TTS, then set SPEAKING state with response text, then IDLE when playback completes.
 
 ---
@@ -243,6 +249,9 @@ These are hard-won lessons. Do NOT change these without testing on hardware:
 - LVGL v9 keypad indev requires a focused group for `read_cb` to be polled → bypass with direct GPIO loop
 - Call `lv_refr_now(NULL)` after style/content changes to force immediate screen refresh
 - Prefer tick-driven animations in `agent_tick()` over LVGL anim timers for predictability
+- **`popen("date ...")`  silently fails on RV1106** (no shell at that path) → always use `time()`/`localtime()`/`strftime()` for system time
+- **`lv_timer_ready()`** may not exist in all LVGL v9 builds → call the callback directly instead
+- **Clock update pattern (confirmed working)**: call `update_clock()` inside `agent_tick()` every tick; use a static `time_t g_last_second` to detect second changes; call `lv_refr_now(NULL)` every tick (same as face animation page)
 
 ### LVGL Configuration (`lvgl_gui/lv_conf.h`)
 
