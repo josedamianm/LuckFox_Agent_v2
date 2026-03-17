@@ -58,22 +58,22 @@ static void get_private_ip(char *buf, size_t len)
     if (buf[0] == '\0') snprintf(buf, len, "---");
 }
 
-static void clock_timer_cb(lv_timer_t *t)
-{
-    (void)t;
-    time_t now = time(NULL);
-    struct tm *tm = localtime(&now);
+static time_t g_last_second = 0;
 
+static void update_clock(void)
+{
+    time_t now = time(NULL);
+    if (now == g_last_second) return;
+    g_last_second = now;
+
+    struct tm *tm = localtime(&now);
     char tbuf[16], dbuf[32], ipbuf[20];
     strftime(tbuf, sizeof tbuf, "%H:%M:%S", tm);
     strftime(dbuf, sizeof dbuf, "%a %d %b %Y", tm);
     get_private_ip(ipbuf, sizeof ipbuf);
-
     lv_label_set_text(g_label_time, tbuf);
     lv_label_set_text(g_label_date, dbuf);
     lv_label_set_text(g_label_ip,   ipbuf);
-    lv_obj_invalidate(lv_screen_active());
-    lv_refr_now(NULL);
 }
 
 /* ------------------------------------------------------------------ */
@@ -270,8 +270,7 @@ void agent_screen_init(void) {
     build_speaking(scr);
     build_error(scr);
 
-    lv_timer_t *clk = lv_timer_create(clock_timer_cb, 1000, NULL);
-    clock_timer_cb(NULL);
+    update_clock();
 
     agent_set_state(AGENT_IDLE, NULL);
 }
@@ -351,6 +350,9 @@ void agent_tick(void) {
     kawaii_tick();
 
     if (g_state == AGENT_IDLE && g_idle_page == 0) {
+        update_clock();
+        lv_obj_invalidate(lv_screen_active());
+        lv_refr_now(NULL);
         return;
     }
 
