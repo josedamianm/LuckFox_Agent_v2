@@ -38,6 +38,68 @@ a compact JSON-line protocol. This cleanly separates rendering performance from 
 
 ---
 
+## 0. Implementation Status (2026-03-17)
+
+### Confirmed Working Hardware Configuration
+
+| Component | Detail |
+|-----------|--------|
+| SPI device | `/dev/spidev0.0` @ 32MHz, `SPI_MODE_0` |
+| SPI transfer | `write()` syscall — `ioctl(SPI_IOC_MESSAGE)` silently fails on RK1106 |
+| MADCTL | `0x60` (90° landscape), XOFF=80, YOFF=0 |
+| Color format | RGB565 big-endian — manual byte swap in `flush_cb` |
+| LVGL render mode | `LV_DISPLAY_RENDER_MODE_FULL`, single 240×240 buffer, `NULL` second buffer |
+| LVGL refresh | `lv_refr_now(NULL)` for immediate flush; `lv_timer_handler()` in main loop |
+| Button polling | Direct sysfs GPIO polling in main loop — LVGL v9 keypad indev `read_cb` not called without focused group |
+| Button GPIOs | A=57, B=69, X=65, Y=67, UP=55, DOWN=64, LEFT=68, RIGHT=66, CTRL=54 |
+| GPIO init | Export + set `in` direction on every startup (not persistent across reboots) |
+
+### Lessons Learned
+
+- `lv_timer_handler()` blocks in LVGL v9 partial render mode → must use `LV_DISPLAY_RENDER_MODE_FULL`
+- `LV_COLOR_16_SWAP 1` is a v8 macro, silently ignored in v9 → manual byte swap required in `flush_cb`
+- `LV_COLOR_FORMAT_RGB565_SWAP` enum does not exist in this LVGL build → use `LV_COLOR_FORMAT_RGB565`
+- LVGL v9 keypad indev requires a focused group/object for `read_cb` to be polled → bypass with direct GPIO loop
+- Button `prev[]` must be initialized from actual GPIO reads to prevent false triggers on startup
+
+### Current `main.c` State
+
+Color-test binary (display + all 9 buttons validated). Next step: restore full app (IPC server, screen manager, HTTP agent).
+
+---
+
+## 0. Implementation Status (2026-03-17)
+
+### Confirmed Working Hardware Configuration
+
+| Component | Detail |
+|-----------|--------|
+| SPI device | `/dev/spidev0.0` @ 32MHz, `SPI_MODE_0` |
+| SPI transfer | `write()` syscall — `ioctl(SPI_IOC_MESSAGE)` silently fails on RK1106 |
+| MADCTL | `0x60` (90° landscape), XOFF=80, YOFF=0 |
+| Color format | RGB565 big-endian — manual byte swap in `flush_cb` |
+| LVGL render mode | `LV_DISPLAY_RENDER_MODE_FULL`, single 240×240 buffer, `NULL` second buffer |
+| LVGL refresh | `lv_refr_now(NULL)` for immediate flush; `lv_timer_handler()` in main loop |
+| Button polling | Direct sysfs GPIO polling in main loop — LVGL v9 keypad indev `read_cb` not called without focused group |
+| Button GPIOs | A=57, B=69, X=65, Y=67, UP=55, DOWN=64, LEFT=68, RIGHT=66, CTRL=54 |
+| GPIO init | Export + set `in` direction on every startup (not persistent across reboots) |
+
+### Lessons Learned
+
+- `lv_timer_handler()` blocks in LVGL v9 partial render mode → must use `LV_DISPLAY_RENDER_MODE_FULL`
+- `LV_COLOR_16_SWAP 1` is a v8 macro, silently ignored in v9 → manual byte swap required in `flush_cb`
+- `LV_COLOR_FORMAT_RGB565_SWAP` enum does not exist in this LVGL build → use `LV_COLOR_FORMAT_RGB565`
+- LVGL v9 keypad indev requires a focused group/object for `read_cb` to be polled → bypass with direct GPIO loop
+- Button `prev[]` must be initialized from actual GPIO reads to prevent false triggers on startup
+
+### Current `main.c` State
+
+Color-test binary (display + buttons validated). Next step: restore full app (IPC server, screen manager, HTTP agent).
+
+---
+
+
+
 ## 2. Current System Analysis (V1)
 
 ### 2.1 Architecture Overview

@@ -142,7 +142,37 @@ Smartwatch-style, all screens use:
 ## Board Hardware
 
 - **Display**: SPI0 (`/dev/spidev0.0`), enabled via `enable_spi0_spidev.dtbo`
-- **Buttons**: 9 GPIO buttons (A, B, X, Y, UP, DOWN, LEFT, RIGHT, CTRL)
+  - ST7789 240×240, MADCTL `0x60` (90° landscape), XOFF=80, YOFF=0
+  - SPI uses `write()` syscall (not `ioctl SPI_IOC_MESSAGE`) — required on RK1106
+  - RGB565 big-endian: manual byte swap done in `flush_cb`
+  - LVGL render mode: `LV_DISPLAY_RENDER_MODE_FULL` with single 240×240 buffer
+  - Refresh: call `lv_refr_now(NULL)` to force immediate flush after state changes
+- **Buttons**: 9 GPIO buttons, active-low (idle=1, pressed=0), sysfs polling
+  - A=GPIO57, B=GPIO69, X=GPIO65, Y=GPIO67
+  - UP=GPIO55, DOWN=GPIO64, LEFT=GPIO68, RIGHT=GPIO66, CTRL=GPIO54
+  - GPIOs must be exported and set to `in` direction by the binary on startup
+  - LVGL keypad indev `read_cb` not called in v9 — use direct sysfs polling in main loop
 - **Audio**: UART2 (`/dev/ttyS2`) → ESP32-C3 → I2S DAC
+  - TX=GPIO42 (Pin1) → ESP32-C3 GPIO4, RX=GPIO43 (Pin2) ← ESP32-C3 GPIO7, GND↔GND
+  - 921600 baud, binary framing: SYNC `0xAA55`, packet type, length, payload, XOR checksum
 - **Camera**: Captured via `board/executables/get_frame.c`
 - **Remote access**: frpc tunnel (`board/init.d/S98frpc`)
+
+## Current State (as of 2026-03-17)
+
+The `main.c` is currently a **color-test binary** (not the full app) that validates display + all 9 buttons:
+- Boot: blue diagnostic flash → navy screen with button instructions label
+- Press A=Red, B=Blue, X=Yellow, Y=Green, UP=Orange, DOWN=Purple, LEFT=Cyan, RIGHT=White, CTRL=Magenta
+- Direct GPIO sysfs polling in main loop + `lv_refr_now(NULL)` on each button press
+
+Next step: restore full app (IPC server, screen manager, HTTP agent integration).
+
+## Known Issues / Lessons Learned
+
+- `lv_timer_handler()` blocks in LVGL v9 partial render mode → use `LV_DISPLAY_RENDER_MODE_FULL`
+- `LV_COLOR_16_SWAP` is a v8 macro ignored by LVGL v9 → do manual byte swap in `flush_cb`
+- `LV_COLOR_FORMAT_RGB565_SWAP` enum does not exist in this build → use `LV_COLOR_FORMAT_RGB565`
+- LVGL v9 keypad indev `read_cb` not polled unless a focused group/object exists → bypass with direct GPIO polling
+- ST7789 on RK1106 spidev: `ioctl(SPI_IOC_MESSAGE)` fails silently → use `write()` syscall
+- GPIO buttons: export + set direction `in` on every startup (not persistent across reboots)
+- Initialize button `prev[]` state from actual GPIO reads to avoid false triggers on startup
