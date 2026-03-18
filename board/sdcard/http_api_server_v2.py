@@ -21,7 +21,7 @@ except ImportError:
 API_PORT           = 8080
 IFACE              = "eth0"
 RKIPC_SOCKET       = "/var/tmp/rkipc"
-RKIPC_SNAPSHOT_DIR = "/userdata"
+RKIPC_SNAPSHOT_DIR = "/mnt/sdcard"
 RTSP_URL           = "rtsp://127.0.0.1/live/0"
 
 gui = None
@@ -69,7 +69,9 @@ def latest_snapshot():
 
 
 def jpeg_complete(data):
-    return len(data) > 4 and data[:2] == b'\xff\xd8' and data[-2:] == b'\xff\xd9'
+    if len(data) < 64 or data[:2] != b'\xff\xd8':
+        return False
+    return b'\xff\xd9' in data[-64:]
 
 
 def capture_frame():
