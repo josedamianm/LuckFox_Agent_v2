@@ -119,7 +119,7 @@ def cleanup_snapshots():
                     pass
         except Exception:
             pass
-        time.sleep(30)
+        time.sleep(5)
 
 
 def on_button_event(msg):
