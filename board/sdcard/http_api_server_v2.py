@@ -4,6 +4,8 @@ import threading
 import time
 import signal
 import sys
+import os
+import socket
 import subprocess
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
@@ -15,8 +17,12 @@ try:
 except ImportError:
     HAS_AUDIO = False
 
-API_PORT = 8080
-IFACE = "eth0"
+API_PORT      = 8080
+IFACE         = "eth0"
+CAMERA_DAEMON = "/root/Executables/camera_daemon"
+MJPEG_PORT    = 8554
+FRAME_LATEST  = "/tmp/frame_latest.jpg"
+FRAME_TMP     = "/tmp/frame.jpg"
 
 gui = None
 
@@ -35,28 +41,50 @@ def get_ipv4(iface):
     return "---"
 
 
-OUTPUT_FRAME = "/tmp/frame.jpg"
+def camera_daemon_running():
+    pid_file = "/tmp/camera_daemon.pid"
+    if not os.path.exists(pid_file):
+        return False
+    try:
+        with open(pid_file) as f:
+            pid = int(f.read().strip())
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
+
 
 def capture_frame():
+    if camera_daemon_running() and os.path.exists(FRAME_LATEST):
+        try:
+            mtime = os.path.getmtime(FRAME_LATEST)
+            age   = time.time() - mtime
+            if age < 5.0:
+                with open(FRAME_LATEST, 'rb') as f:
+                    data = f.read()
+                if data:
+                    return data, None
+        except Exception as e:
+            pass
+
     try:
-        import os
         env = os.environ.copy()
         env["LD_LIBRARY_PATH"] = "/oem/usr/lib:/usr/lib"
         result = subprocess.run(
-            ["/root/Executables/get_frame", OUTPUT_FRAME],
-            capture_output=True, timeout=30, env=env
+            ["/root/Executables/get_frame", FRAME_TMP],
+            capture_output=True, timeout=60, env=env
         )
         stderr = result.stderr.decode(errors='replace').strip()
         if result.returncode != 0:
             return None, f"get_frame failed (rc={result.returncode}): {stderr}"
-        if not os.path.exists(OUTPUT_FRAME) or os.path.getsize(OUTPUT_FRAME) == 0:
+        if not os.path.exists(FRAME_TMP) or os.path.getsize(FRAME_TMP) == 0:
             return None, f"get_frame produced empty file. stderr: {stderr}"
-        with open(OUTPUT_FRAME, 'rb') as f:
+        with open(FRAME_TMP, 'rb') as f:
             data = f.read()
-        os.remove(OUTPUT_FRAME)
+        os.remove(FRAME_TMP)
         return data, None
     except subprocess.TimeoutExpired:
-        return None, "Timeout (get_frame took >30s)"
+        return None, "Timeout: get_frame took >60s (camera_daemon not running?)"
     except Exception as e:
         return None, str(e)
 
@@ -109,6 +137,47 @@ class APIHandler(BaseHTTPRequestHandler):
                 self._binary(200, jpeg_data, 'image/jpeg')
             else:
                 self._json(500, {'error': err or 'Capture failed'})
+
+        elif path == '/api/camera/status':
+            running = camera_daemon_running()
+            frame_age = None
+            if os.path.exists(FRAME_LATEST):
+                frame_age = round(time.time() - os.path.getmtime(FRAME_LATEST), 2)
+            self._json(200, {
+                'daemon_running': running,
+                'frame_latest': FRAME_LATEST if os.path.exists(FRAME_LATEST) else None,
+                'frame_age_sec': frame_age,
+                'mjpeg_port': MJPEG_PORT
+            })
+
+        elif path == '/api/stream':
+            if not camera_daemon_running():
+                self._json(503, {'error': 'camera_daemon not running', 'hint': 'Start camera_daemon first'})
+                return
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(3)
+                sock.connect(('127.0.0.1', MJPEG_PORT))
+                sock.send(b'GET / HTTP/1.0\r\nHost: localhost\r\n\r\n')
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=--luckfoxframe')
+                self.send_header('Cache-Control', 'no-cache')
+                self.end_headers()
+
+                sock.settimeout(5)
+                while True:
+                    try:
+                        chunk = sock.recv(65536)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+                    except (socket.timeout, BrokenPipeError, ConnectionResetError):
+                        break
+                sock.close()
+            except Exception as e:
+                self._json(502, {'error': f'Stream proxy failed: {e}'})
 
         elif path == '/api/audio/stop':
             if not HAS_AUDIO:

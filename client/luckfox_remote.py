@@ -71,10 +71,19 @@ available commands & API endpoints:
   status                GET  /api/status              device info (ip, audio, agent_state)
   state                 GET  /api/agent/state          current agent state
   set <state>           POST /api/agent/state          set agent state
-  capture               GET  /api/capture              capture JPEG frame from camera
+  capture               GET  /api/capture              capture JPEG (fast: reads daemon frame)
+  camera-status         GET  /api/camera/status        camera daemon health + frame age
+  stream                     /api/stream               print MJPEG stream URL (open in browser/VLC)
   audio <file>          POST /api/audio/play           upload and play a WAV file
   tone                  POST /api/audio/tone           play a test tone
   audio-stop            GET  /api/audio/stop           stop audio playback
+
+camera daemon:
+  When camera_daemon is running on the board (started by main.py at boot), capture
+  returns the pre-captured frame in <100ms. Without the daemon it falls back to
+  get_frame which takes ~15-60s (full ISP init each call).
+  The MJPEG stream (port 8554) is proxied via /api/stream — open it in a browser or
+  VLC as:  http://<host>:8080/api/stream
 
 examples:
   %(prog)s status
@@ -82,16 +91,16 @@ examples:
   %(prog)s set idle
   %(prog)s set speaking --text "Hello!"
   %(prog)s set error --text "Something went wrong"
+  %(prog)s camera-status
   %(prog)s capture -o frame.jpg
+  %(prog)s stream
   %(prog)s tone --freq 880 --duration 2
   %(prog)s audio response.wav
   %(prog)s audio-stop
 
   %(prog)s --host 192.168.1.60 status
-  %(prog)s --host 192.168.1.60 set thinking
-  %(prog)s --host 192.168.1.60 tone --freq 440 --duration 3
-  %(prog)s --host 192.168.1.60 audio response.wav
   %(prog)s --host 192.168.1.60 capture -o frame.jpg
+  %(prog)s --host 192.168.1.60 stream
 """
     parser = argparse.ArgumentParser(
         description="LuckFox Agent V2 API Client",
@@ -114,6 +123,9 @@ examples:
     p_cap = sub.add_parser("capture", help="GET /api/capture — capture JPEG frame from camera")
     p_cap.add_argument("-o", "--output", default="capture.jpg",
                        help="Output file path (default: capture.jpg)")
+
+    sub.add_parser("camera-status", help="GET /api/camera/status — camera daemon health + frame age")
+    sub.add_parser("stream", help="/api/stream — print MJPEG stream URL (open in browser/VLC)")
 
     p_audio = sub.add_parser("audio", help="POST /api/audio/play — upload and play a WAV file")
     p_audio.add_argument("file", help="WAV file path")
@@ -150,7 +162,7 @@ examples:
 
     elif args.command == "capture":
         print("Capturing frame from camera...", file=sys.stderr)
-        data, content_type, err = api_get_binary(base, "/api/capture", timeout=30)
+        data, content_type, err = api_get_binary(base, "/api/capture", timeout=10)
         if data:
             with open(args.output, "wb") as f:
                 f.write(data)
@@ -158,6 +170,15 @@ examples:
         else:
             print(f"Capture failed: {err}", file=sys.stderr)
             sys.exit(1)
+
+    elif args.command == "camera-status":
+        result = api_get(base, "/api/camera/status")
+        print(json.dumps(result, indent=2))
+
+    elif args.command == "stream":
+        stream_url = f"{base}/api/stream"
+        print(f"MJPEG stream URL: {stream_url}")
+        print(f"Open in browser or VLC: vlc {stream_url}")
 
     elif args.command == "audio":
         print(f"Uploading {args.file}...", file=sys.stderr)
