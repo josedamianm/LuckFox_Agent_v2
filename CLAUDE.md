@@ -55,7 +55,13 @@ luckfox_gui (C) → IPC event → Python HTTP server
 - Cleanup daemon keeps only 5 snapshots on SD card at all times
 - All client commands verified: status, state, set, capture, camera-status, stream, tone, audio, audio-stop
 
-**Next step**: Connect the MacBook AI pipeline — when THINKING state is entered (CTRL released), send recorded audio to MacBook for STT → LLM → TTS, then set SPEAKING state with response text, then IDLE when playback completes.
+**Pending — next actions:**
+
+1. **Audio recording on board** — when CTRL is pressed (LISTENING state), start recording audio from the microphone; stop when CTRL is released (THINKING state)
+2. **MacBook AI pipeline** — receive recorded audio from board, run STT (speech-to-text), send transcript to LLM, get response, run TTS (text-to-speech), send WAV back to board
+3. **Board playback** — receive TTS WAV via `/api/audio/play`, play through ESP32-C3, set SPEAKING state with response text, return to IDLE when playback completes
+4. **Error handling** — on any pipeline failure (network timeout, STT error, LLM error), set ERROR state with message, then return to IDLE after a few seconds
+5. **End-to-end test** — press CTRL, speak, release CTRL → board records → MacBook processes → board speaks response → IDLE
 
 ---
 
