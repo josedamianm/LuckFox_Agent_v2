@@ -37,7 +37,9 @@ def get_ipv4(iface):
 
 def capture_frame():
     try:
-        env = {"LD_LIBRARY_PATH": "/usr/lib"}
+        import os
+        env = os.environ.copy()
+        env["LD_LIBRARY_PATH"] = "/usr/lib"
         subprocess.run(["killall", "rkipc"], capture_output=True, timeout=3, env=env)
         time.sleep(0.3)
         result = subprocess.run(
@@ -46,7 +48,8 @@ def capture_frame():
         )
         if result.returncode == 0 and result.stdout:
             return result.stdout, None
-        return None, "get_frame failed"
+        stderr = result.stderr.decode(errors='replace').strip()
+        return None, f"get_frame failed (rc={result.returncode}): {stderr}"
     except subprocess.TimeoutExpired:
         return None, "Timeout"
     except Exception as e:
