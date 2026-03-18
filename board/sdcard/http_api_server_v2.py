@@ -35,23 +35,28 @@ def get_ipv4(iface):
     return "---"
 
 
+OUTPUT_FRAME = "/tmp/frame.jpg"
+
 def capture_frame():
     try:
         import os
         env = os.environ.copy()
-        env["LD_LIBRARY_PATH"] = "/usr/lib"
-        subprocess.run(["killall", "rkipc"], capture_output=True, timeout=3, env=env)
-        time.sleep(0.3)
+        env["LD_LIBRARY_PATH"] = "/oem/usr/lib:/usr/lib"
         result = subprocess.run(
-            ["/root/Executables/get_frame"],
-            capture_output=True, timeout=5, env=env
+            ["/root/Executables/get_frame", OUTPUT_FRAME],
+            capture_output=True, timeout=30, env=env
         )
-        if result.returncode == 0 and result.stdout:
-            return result.stdout, None
         stderr = result.stderr.decode(errors='replace').strip()
-        return None, f"get_frame failed (rc={result.returncode}): {stderr}"
+        if result.returncode != 0:
+            return None, f"get_frame failed (rc={result.returncode}): {stderr}"
+        if not os.path.exists(OUTPUT_FRAME) or os.path.getsize(OUTPUT_FRAME) == 0:
+            return None, f"get_frame produced empty file. stderr: {stderr}"
+        with open(OUTPUT_FRAME, 'rb') as f:
+            data = f.read()
+        os.remove(OUTPUT_FRAME)
+        return data, None
     except subprocess.TimeoutExpired:
-        return None, "Timeout"
+        return None, "Timeout (get_frame took >30s)"
     except Exception as e:
         return None, str(e)
 
