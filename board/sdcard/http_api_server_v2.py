@@ -68,20 +68,30 @@ def latest_snapshot():
     return newest, newest_mtime
 
 
+def jpeg_complete(data):
+    return len(data) > 4 and data[:2] == b'\xff\xd8' and data[-2:] == b'\xff\xd9'
+
+
 def capture_frame():
     if not rkipc_running():
         return None, "rkipc not running"
     fpath, mtime = latest_snapshot()
     if not fpath:
         return None, "No snapshots yet — rkipc may still be initializing"
-    try:
-        with open(fpath, 'rb') as f:
-            data = f.read()
-        if not data:
-            return None, "Snapshot file is empty"
-        return data, None
-    except Exception as e:
-        return None, str(e)
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        try:
+            with open(fpath, 'rb') as f:
+                data = f.read()
+            if jpeg_complete(data):
+                return data, None
+        except Exception as e:
+            return None, str(e)
+        time.sleep(0.05)
+        new_path, new_mtime = latest_snapshot()
+        if new_path and new_path != fpath:
+            fpath = new_path
+    return None, "Snapshot incomplete after 2s — rkipc still writing?"
 
 
 def on_button_event(msg):
