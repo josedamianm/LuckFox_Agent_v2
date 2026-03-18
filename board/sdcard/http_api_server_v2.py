@@ -5,6 +5,7 @@ import time
 import signal
 import sys
 import os
+import stat
 import socket
 import subprocess
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -17,12 +18,11 @@ try:
 except ImportError:
     HAS_AUDIO = False
 
-API_PORT      = 8080
-IFACE         = "eth0"
-CAMERA_DAEMON = "/root/Executables/camera_daemon"
-MJPEG_PORT    = 8554
-FRAME_LATEST  = "/tmp/frame_latest.jpg"
-FRAME_TMP     = "/tmp/frame.jpg"
+API_PORT           = 8080
+IFACE              = "eth0"
+RKIPC_SOCKET       = "/var/tmp/rkipc"
+RKIPC_SNAPSHOT_DIR = "/userdata"
+RTSP_URL           = "rtsp://127.0.0.1/live/0"
 
 gui = None
 
@@ -41,50 +41,45 @@ def get_ipv4(iface):
     return "---"
 
 
-def camera_daemon_running():
-    pid_file = "/tmp/camera_daemon.pid"
-    if not os.path.exists(pid_file):
-        return False
+def rkipc_running():
     try:
-        with open(pid_file) as f:
-            pid = int(f.read().strip())
-        os.kill(pid, 0)
-        return True
+        return os.path.exists(RKIPC_SOCKET) and stat.S_ISSOCK(os.stat(RKIPC_SOCKET).st_mode)
     except Exception:
         return False
 
 
-def capture_frame():
-    if camera_daemon_running() and os.path.exists(FRAME_LATEST):
-        try:
-            mtime = os.path.getmtime(FRAME_LATEST)
-            age   = time.time() - mtime
-            if age < 5.0:
-                with open(FRAME_LATEST, 'rb') as f:
-                    data = f.read()
-                if data:
-                    return data, None
-        except Exception as e:
-            pass
-
+def latest_snapshot():
+    newest = None
+    newest_mtime = 0
     try:
-        env = os.environ.copy()
-        env["LD_LIBRARY_PATH"] = "/oem/usr/lib:/usr/lib"
-        result = subprocess.run(
-            ["/root/Executables/get_frame", FRAME_TMP],
-            capture_output=True, timeout=60, env=env
-        )
-        stderr = result.stderr.decode(errors='replace').strip()
-        if result.returncode != 0:
-            return None, f"get_frame failed (rc={result.returncode}): {stderr}"
-        if not os.path.exists(FRAME_TMP) or os.path.getsize(FRAME_TMP) == 0:
-            return None, f"get_frame produced empty file. stderr: {stderr}"
-        with open(FRAME_TMP, 'rb') as f:
+        for root, dirs, files in os.walk(RKIPC_SNAPSHOT_DIR):
+            for fname in files:
+                if fname.endswith('.jpeg') or fname.endswith('.jpg'):
+                    fpath = os.path.join(root, fname)
+                    try:
+                        mt = os.path.getmtime(fpath)
+                        if mt > newest_mtime:
+                            newest_mtime = mt
+                            newest = fpath
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    return newest, newest_mtime
+
+
+def capture_frame():
+    if not rkipc_running():
+        return None, "rkipc not running"
+    fpath, mtime = latest_snapshot()
+    if not fpath:
+        return None, "No snapshots yet — rkipc may still be initializing"
+    try:
+        with open(fpath, 'rb') as f:
             data = f.read()
-        os.remove(FRAME_TMP)
+        if not data:
+            return None, "Snapshot file is empty"
         return data, None
-    except subprocess.TimeoutExpired:
-        return None, "Timeout: get_frame took >60s (camera_daemon not running?)"
     except Exception as e:
         return None, str(e)
 
@@ -139,45 +134,49 @@ class APIHandler(BaseHTTPRequestHandler):
                 self._json(500, {'error': err or 'Capture failed'})
 
         elif path == '/api/camera/status':
-            running = camera_daemon_running()
-            frame_age = None
-            if os.path.exists(FRAME_LATEST):
-                frame_age = round(time.time() - os.path.getmtime(FRAME_LATEST), 2)
+            running = rkipc_running()
+            fpath, mtime = latest_snapshot()
+            frame_age = round(time.time() - mtime, 2) if fpath else None
             self._json(200, {
-                'daemon_running': running,
-                'frame_latest': FRAME_LATEST if os.path.exists(FRAME_LATEST) else None,
-                'frame_age_sec': frame_age,
-                'mjpeg_port': MJPEG_PORT
+                'rkipc_running': running,
+                'rtsp_url': RTSP_URL,
+                'latest_snapshot': fpath,
+                'snapshot_age_sec': frame_age,
+                'snapshot_dir': RKIPC_SNAPSHOT_DIR
             })
 
         elif path == '/api/stream':
-            if not camera_daemon_running():
-                self._json(503, {'error': 'camera_daemon not running', 'hint': 'Start camera_daemon first'})
+            if not rkipc_running():
+                self._json(503, {'error': 'rkipc not running'})
                 return
             try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(3)
-                sock.connect(('127.0.0.1', MJPEG_PORT))
-                sock.send(b'GET / HTTP/1.0\r\nHost: localhost\r\n\r\n')
-
                 self.send_response(200)
                 self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=--luckfoxframe')
                 self.send_header('Cache-Control', 'no-cache')
                 self.end_headers()
 
-                sock.settimeout(5)
+                last_path = None
                 while True:
-                    try:
-                        chunk = sock.recv(65536)
-                        if not chunk:
+                    fpath, mtime = latest_snapshot()
+                    if fpath and fpath != last_path:
+                        try:
+                            with open(fpath, 'rb') as f:
+                                data = f.read()
+                            if data:
+                                frame = (
+                                    b'--luckfoxframe\r\n'
+                                    b'Content-Type: image/jpeg\r\n'
+                                    b'Content-Length: ' + str(len(data)).encode() + b'\r\n\r\n'
+                                    + data + b'\r\n'
+                                )
+                                self.wfile.write(frame)
+                                self.wfile.flush()
+                                last_path = fpath
+                        except Exception:
                             break
-                        self.wfile.write(chunk)
-                        self.wfile.flush()
-                    except (socket.timeout, BrokenPipeError, ConnectionResetError):
-                        break
-                sock.close()
-            except Exception as e:
-                self._json(502, {'error': f'Stream proxy failed: {e}'})
+                    time.sleep(0.1)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
 
         elif path == '/api/audio/stop':
             if not HAS_AUDIO:

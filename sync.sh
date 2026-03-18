@@ -18,7 +18,6 @@ fi
 
 FILE_MAP=(
     "lvgl_gui/build/luckfox_gui:/root/Executables/luckfox_gui"
-    "board/executables/build/camera_daemon:/root/Executables/camera_daemon"
     "board/root/main.py:/root/main.py"
     "board/root/enable_spi0_spidev.dtbo:/root/enable_spi0_spidev.dtbo"
     "board/root/enable_spi0_spidev.dts:/root/enable_spi0_spidev.dts"
@@ -36,8 +35,6 @@ FILE_MAP=(
     "board/init.d/S99button_pullups:/etc/init.d/S99button_pullups"
     "board/init.d/S99python:/etc/init.d/S99python"
     "board/init.d/S98frpc:/etc/init.d/S98frpc"
-    "board/executables/get_frame.c:/root/Executables/get_frame.c"
-    "board/executables/camera_daemon.c:/root/Executables/camera_daemon.c"
 )
 
 get_remote() {

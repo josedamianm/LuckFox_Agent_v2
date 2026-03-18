@@ -387,7 +387,59 @@ esac
 
 ---
 
-## 12. V1 Reference (Legacy)
+## 12. Camera — rkipc Integration
+
+The camera is managed entirely by the **rkipc** service (Rockchip IPC daemon). Do NOT run a custom camera_daemon — it would conflict with rkipc and lose ISP/3A processing, producing dark/greenish images.
+
+### How rkipc works
+
+- Started automatically at boot via `RkLunch.sh` → `post_chk()` → `rkipc -a /oem/usr/share/iqfiles`
+- Reads config from `/userdata/rkipc.ini` (copied from `/oem/usr/share/rkipc-300w.ini` on every boot)
+- Provides RTSP stream at `rtsp://<device-ip>/live/0` and `rtsp://<device-ip>/live/1`
+- With `enable_cycle_snapshot = 1`: saves JPEG files to `/userdata/` every `snapshot_interval_ms` ms
+- JPEG filename format: `YYYYMMDDHHMMSS.jpeg` in subdirectories under `/userdata/`
+- IPC socket: `/var/tmp/rkipc` (Unix domain socket, `srw-rw-rw-`)
+
+### Key config (persisted in `/oem/usr/share/rkipc-300w.ini`)
+
+```ini
+[video.source]
+enable_jpeg = 1
+enable_rtsp = 1
+
+[video.jpeg]
+width = 1920
+height = 1080
+enable_cycle_snapshot = 1
+snapshot_interval_ms = 500
+
+[storage]
+mount_path = /userdata
+```
+
+**IMPORTANT**: Always edit `/oem/usr/share/rkipc-300w.ini` for persistent changes. Edits to `/userdata/rkipc.ini` are overwritten on every boot by `RkLunch.sh`.
+
+### Python API (`http_api_server_v2.py`)
+
+| Function | Behaviour |
+|----------|-----------|
+| `rkipc_running()` | Returns `True` if `/var/tmp/rkipc` exists as a socket |
+| `latest_snapshot()` | Walks `/userdata/` tree, returns path + mtime of newest `.jpeg` |
+| `capture_frame()` | Reads newest snapshot; errors if >10s old or rkipc not running |
+| `GET /api/capture` | Returns latest JPEG as `image/jpeg` |
+| `GET /api/camera/status` | Returns `rkipc_running`, `rtsp_url`, `latest_snapshot`, `snapshot_age_sec` |
+| `GET /api/stream` | MJPEG stream (polls snapshot dir, serves each new file as a frame) |
+
+### RTSP stream (VLC / external)
+
+```
+rtsp://<device-ip>/live/0   ← main stream (2304×1296)
+rtsp://<device-ip>/live/1   ← sub stream
+```
+
+---
+
+## 13. V1 Reference (Legacy)
 
 V1 was a single-process Python architecture where `http_api_server.py` (1192 lines) handled everything: HTTP API, SPI display driver, button polling, and all renderers. Key V1 files still in the repo:
 
