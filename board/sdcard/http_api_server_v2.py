@@ -96,6 +96,32 @@ def capture_frame():
     return None, "Snapshot incomplete after 2s — rkipc still writing?"
 
 
+SNAPSHOT_KEEP = 5
+
+
+def cleanup_snapshots():
+    while True:
+        try:
+            all_files = []
+            for root, dirs, files in os.walk(RKIPC_SNAPSHOT_DIR):
+                for fname in files:
+                    if fname.endswith('.jpeg') or fname.endswith('.jpg'):
+                        fpath = os.path.join(root, fname)
+                        try:
+                            all_files.append((os.path.getmtime(fpath), fpath))
+                        except Exception:
+                            pass
+            all_files.sort(reverse=True)
+            for _, fpath in all_files[SNAPSHOT_KEEP:]:
+                try:
+                    os.remove(fpath)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        time.sleep(30)
+
+
 def on_button_event(msg):
     name = msg.get("name")
     state = msg.get("state")
@@ -270,6 +296,7 @@ def main():
     print(f"Audio support: {HAS_AUDIO}")
 
     gui = GUIClient(event_callback=on_button_event)
+    threading.Thread(target=cleanup_snapshots, daemon=True).start()
 
     def signal_handler(sig, frame):
         print("\nShutting down...")
