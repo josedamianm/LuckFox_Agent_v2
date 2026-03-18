@@ -71,19 +71,27 @@ available commands & API endpoints:
   status                GET  /api/status              device info (ip, audio, agent_state)
   state                 GET  /api/agent/state          current agent state
   set <state>           POST /api/agent/state          set agent state
-  capture               GET  /api/capture              capture JPEG (fast: reads daemon frame)
-  camera-status         GET  /api/camera/status        camera daemon health + frame age
+  capture               GET  /api/capture              capture JPEG from rkipc snapshot
+  camera-status         GET  /api/camera/status        rkipc health + latest snapshot age
   stream                     /api/stream               print MJPEG stream URL (open in browser/VLC)
-  audio <file>          POST /api/audio/play           upload and play a WAV file
-  tone                  POST /api/audio/tone           play a test tone
+  audio <file>          POST /api/audio/play           upload and play a WAV file on the board
+  tone                  POST /api/audio/tone           play a sine-wave test tone
   audio-stop            GET  /api/audio/stop           stop audio playback
 
-camera daemon:
-  When camera_daemon is running on the board (started by main.py at boot), capture
-  returns the pre-captured frame in <100ms. Without the daemon it falls back to
-  get_frame which takes ~15-60s (full ISP init each call).
-  The MJPEG stream (port 8554) is proxied via /api/stream — open it in a browser or
-  VLC as:  http://<host>:8080/api/stream
+camera:
+  The board runs rkipc (Rockchip IPC daemon) which writes periodic JPEG snapshots to
+  /mnt/sdcard every ~200ms. /api/capture reads the newest complete snapshot (<100ms).
+  /api/stream serves an MJPEG multipart stream by polling for new snapshot files.
+  Open the stream in a browser or VLC:  vlc <stream-url>
+  Config persists in /oem/usr/share/rkipc-300w.ini on the board (NOT /userdata/rkipc.ini
+  which is overwritten on every boot).
+
+agent states:
+  idle       — waiting for input
+  listening  — recording audio (CTRL held)
+  thinking   — processing (CTRL released)
+  speaking   — playing TTS response (--text sets display text)
+  error      — error state (--text sets error message)
 
 examples:
   %(prog)s status

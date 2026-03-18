@@ -33,20 +33,27 @@ luckfox_gui (C) → IPC event → Python HTTP server
 
 ---
 
-## 2. Current Status (2026-03-17)
+## 2. Current Status (2026-03-18)
 
 **Display + all 9 buttons confirmed working on hardware.**
 
-**IPC/HTTP integration complete.** All three Python files now speak the V2 protocol:
+**IPC/HTTP integration complete.** All three Python files speak the V2 protocol:
 - `gui_client.py`: `set_state()` sends `{"cmd": "set_state", "state": "...", "text": "..."}` matching `cmd_parser.c`
 - `http_api_server_v2.py`: V2 agent state endpoints (`GET/POST /api/agent/state`), CTRL button events drive state machine (pressed→LISTENING, released→THINKING)
-- `main.py`: launches `http_api_server_v2.py` (was pointing to V1 `http_api_server.py`)
+- `main.py`: launches `http_api_server_v2.py`
 
-**IDLE screen confirmed working on hardware (2026-03-17):**
+**IDLE screen confirmed working on hardware:**
 - Page 0 (Status): time updates every second, date and IP display correctly
 - Page 1 (Kawaii face): smooth animation, blink/bounce/emotion state machine working
 - LEFT/RIGHT buttons navigate between pages
 - Clock uses `time()`/`localtime()`/`strftime()` — pure C stdlib, no shell required
+
+**Camera confirmed working (2026-03-18):**
+- rkipc cycle snapshots writing to `/mnt/sdcard` every 200ms (~5 FPS)
+- `/api/capture` returns complete JPEG frames (<100ms response)
+- `/api/stream` MJPEG stream working at ~5 FPS in browser/VLC
+- Cleanup daemon keeps only 5 snapshots on SD card at all times
+- All client commands verified: status, state, set, capture, camera-status, stream, tone, audio, audio-stop
 
 **Next step**: Connect the MacBook AI pipeline — when THINKING state is entered (CTRL released), send recorded audio to MacBook for STT → LLM → TTS, then set SPEAKING state with response text, then IDLE when playback completes.
 
@@ -124,8 +131,6 @@ Newline-delimited JSON over Unix domain socket `/tmp/luckfox_gui.sock`. Transpor
 {"event": "button", "name": "CTRL", "state": "released"}
 ```
 
-**IMPORTANT**: The current `cmd_parser.c` only handles `set_state` commands. The `http_api_server_v2.py` still sends V1-style `{"cmd": "screen", "name": "..."}` commands — this mismatch must be resolved.
-
 ---
 
 ## 6. C Binary Structure (`lvgl_gui/src/`)
@@ -184,9 +189,10 @@ Animation approach (no LVGL anim timers, driven by `agent_tick()`):
 | File | Role |
 |------|------|
 | `board/sdcard/gui_client.py` | IPC client class — connects to `/tmp/luckfox_gui.sock`, auto-reconnects, sends JSON, reads button events in background thread |
-| `board/sdcard/http_api_server_v2.py` | HTTP API on port 8080 — uses `GUIClient`, handles `/api/status`, `/api/mode/*`, `/api/emoji/*`, `/api/text`, `/api/audio/*` |
+| `board/sdcard/http_api_server_v2.py` | HTTP API on port 8080 — agent state, camera capture/stream, audio playback via ESP32-C3 |
 | `board/root/main.py` | Boot launcher — starts `luckfox_gui` binary, waits 1.5s, then starts Python server |
-| `board/sdcard/audio_sender.py` | UART packet protocol to ESP32-C3 (unchanged from V1) |
+| `board/sdcard/audio_sender.py` | UART packet protocol to ESP32-C3 |
+| `client/luckfox_remote.py` | MacBook CLI client for testing all API endpoints |
 
 ---
 
@@ -315,12 +321,59 @@ file lvgl_gui/build/luckfox_gui
 
 #### Rebuild After Changes
 
+The Docker container runs on a remote Ubuntu server (`nlighten_gpu_server`). The workspace is mounted at `/home/josemanco/luckfox-crossdev/projects/` on the server and at `/workspace/` inside the container. Follow these steps end-to-end whenever the C binary (`luckfox_gui`) needs to be recompiled.
+
+##### Step 1 — Push changes from MacBook to GitHub
+
 ```bash
-docker start -i luckfox-crossdev
+git add -A && git commit -m "your message"
+git push
+```
+
+##### Step 2 — Start container on remote server and open a shell
+
+```bash
+ssh nlighten_gpu_server
+docker start luckfox-crossdev && docker exec -it luckfox-crossdev /bin/bash
+```
+
+##### Step 3 — Pull latest code inside container
+
+```bash
 cd /workspace/LuckFox_Agent_v2
 git pull
-cd lvgl_gui/build && make -j$(nproc)
-exit
+```
+
+##### Step 4 — Compile (clean build)
+
+```bash
+cd lvgl_gui
+rm -rf build && mkdir build && cd build
+cmake -DCMAKE_TOOLCHAIN_FILE=../toolchain-rv1106.cmake .. && make -j$(nproc)
+ls -ltrh   # verify luckfox_gui binary was produced
+```
+
+##### Step 5 — Copy binary back to MacBook
+
+```bash
+# Run on MacBook (not inside container/server)
+cd /path/to/LuckFox_Agent_v2
+scp nlighten_gpu_server:/home/josemanco/luckfox-crossdev/projects/LuckFox_Agent_v2/lvgl_gui/build/luckfox_gui board/executables/luckfox_gui
+ls -ltrh board/executables/luckfox_gui   # verify
+```
+
+##### Step 6 — Push binary to board via sync.sh
+
+```bash
+./sync.sh push
+```
+
+##### Step 7 — Reboot board to apply
+
+```bash
+ssh root@192.168.1.60 "reboot"
+# or via tunnel:
+# ssh root@luckfoxpico1.aiserver.onmobilespace.com "reboot"
 ```
 
 ---
@@ -396,11 +449,13 @@ The camera is managed entirely by the **rkipc** service (Rockchip IPC daemon). D
 - Started automatically at boot via `RkLunch.sh` → `post_chk()` → `rkipc -a /oem/usr/share/iqfiles`
 - Reads config from `/userdata/rkipc.ini` (copied from `/oem/usr/share/rkipc-300w.ini` on every boot)
 - Provides RTSP stream at `rtsp://<device-ip>/live/0` and `rtsp://<device-ip>/live/1`
-- With `enable_cycle_snapshot = 1`: saves JPEG files to `/userdata/` every `snapshot_interval_ms` ms
-- JPEG filename format: `YYYYMMDDHHMMSS.jpeg` in subdirectories under `/userdata/`
+- With `enable_cycle_snapshot = 1`: saves JPEG files to `/mnt/sdcard/` every `snapshot_interval_ms` ms
+- JPEG filename format: `YYYYMMDDHHMMSS.jpeg` in subdirectories under `mount_path`
 - IPC socket: `/var/tmp/rkipc` (Unix domain socket, `srw-rw-rw-`)
 
 ### Key config (persisted in `/oem/usr/share/rkipc-300w.ini`)
+
+**IMPORTANT**: Always edit `/oem/usr/share/rkipc-300w.ini` for persistent changes. `/userdata/rkipc.ini` is overwritten on every boot by `RkLunch.sh`.
 
 ```ini
 [video.source]
@@ -411,63 +466,54 @@ enable_rtsp = 1
 width = 1920
 height = 1080
 enable_cycle_snapshot = 1
-snapshot_interval_ms = 500
+snapshot_interval_ms = 200      ; ~5 FPS — tune for speed vs CPU load
 
 [storage]
-mount_path = /userdata
+mount_path = /mnt/sdcard        ; NOT /userdata (only 2.2MB, always full)
+free_size_del_min = 50          ; MB — start deleting old files below this
+free_size_del_max = 200         ; MB — stop deleting above this
 ```
-
-**IMPORTANT**: Always edit `/oem/usr/share/rkipc-300w.ini` for persistent changes. Edits to `/userdata/rkipc.ini` are overwritten on every boot by `RkLunch.sh`.
 
 ### Python API (`http_api_server_v2.py`)
 
-| Function | Behaviour |
-|----------|-----------|
+| Constant / Function | Behaviour |
+|---|---|
+| `RKIPC_SNAPSHOT_DIR = "/mnt/sdcard"` | Root dir walked for snapshot files |
+| `SNAPSHOT_KEEP = 5` | Max snapshots kept by cleanup daemon |
 | `rkipc_running()` | Returns `True` if `/var/tmp/rkipc` exists as a socket |
-| `latest_snapshot()` | Walks `/userdata/` tree, returns path + mtime of newest `.jpeg` |
-| `capture_frame()` | Reads newest snapshot; errors if >10s old or rkipc not running |
-| `GET /api/capture` | Returns latest JPEG as `image/jpeg` |
+| `latest_snapshot()` | Walks `RKIPC_SNAPSHOT_DIR` tree, returns path + mtime of newest `.jpeg` |
+| `jpeg_complete(data)` | Checks `FFD8` header and `FFD9` in last 64 bytes (avoids partial reads) |
+| `capture_frame()` | Retries up to 2s for a complete JPEG; follows newer files if they appear |
+| `cleanup_snapshots()` | Background thread (every 5s): keeps newest 5 snapshots, deletes the rest |
+| `GET /api/capture` | Returns latest complete JPEG as `image/jpeg` |
 | `GET /api/camera/status` | Returns `rkipc_running`, `rtsp_url`, `latest_snapshot`, `snapshot_age_sec` |
-| `GET /api/stream` | MJPEG stream (polls snapshot dir, serves each new file as a frame) |
+| `GET /api/stream` | MJPEG multipart stream — polls snapshot dir, serves each new file as a frame |
+
+### Disk management
+
+At 200ms interval, rkipc writes ~5 JPEGs/sec (~130KB each). The `cleanup_snapshots()` daemon runs every 5s and keeps only the 5 newest files (~650KB total on SD card). The SD card (`/mnt/sdcard`, ~60GB) has plenty of headroom.
 
 ### RTSP stream (VLC / external)
 
 ```
-rtsp://<device-ip>/live/0   ← main stream (2304×1296)
+rtsp://<device-ip>/live/0   ← main stream (1920×1080)
 rtsp://<device-ip>/live/1   ← sub stream
 ```
 
 ---
 
-## 13. V1 Reference (Legacy)
+## 14. V1 Reference (Legacy)
 
-V1 was a single-process Python architecture where `http_api_server.py` (1192 lines) handled everything: HTTP API, SPI display driver, button polling, and all renderers. Key V1 files still in the repo:
+Key V1 files still in the repo (deprecated):
 
 | File | Description |
 |------|-------------|
-| `board/sdcard/http_api_server.py` | V1 monolith (deprecated — replaced by `http_api_server_v2.py`) |
+| `board/sdcard/http_api_server.py` | V1 monolith (replaced by `http_api_server_v2.py`) |
 | `board/init.d/S99python` | V1 boot script (starts `main.py` which launches the old server) |
-
-V1 HTTP API endpoints (contract preserved in V2):
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/status` | Current mode, uptime |
-| GET | `/api/mode/status` | Switch to status screen |
-| GET | `/api/mode/eyes` | Switch to eyes animation |
-| GET | `/api/emoji/{name}` | Show named emoji |
-| GET | `/api/capture` | JPEG from RTSP camera |
-| GET | `/api/audio/stop` | Stop audio playback |
-| GET | `/api/audio/tone` | Play 440Hz test tone |
-| POST | `/api/text` | Display custom text (JSON body) |
-| POST | `/api/image` | Display image (binary body) |
-| POST | `/api/gif/frames` | Display GIF animation (JSON body) |
-| POST | `/api/audio/play` | Play WAV file (binary body) |
-| POST | `/api/audio/tone` | Play custom tone (JSON body) |
 
 ---
 
-## 13. Project Directory Structure
+## 14. Project Directory Structure
 
 ```
 LuckFox_Agent_v2/
@@ -522,7 +568,7 @@ LuckFox_Agent_v2/
 
 ---
 
-## 14. Troubleshooting
+## 15. Troubleshooting
 
 | Symptom | Fix |
 |---------|-----|
@@ -536,12 +582,31 @@ LuckFox_Agent_v2/
 | IPC connection refused (Python → C) | `luckfox_gui` must start first; socket created after LVGL init |
 | `git submodule` fails in container | Check internet: `curl -I https://github.com`; or clone LVGL on host and copy in |
 | `python3` not found on board | `opkg update && opkg install python3` |
+| `/api/capture` returns error "rkipc not running" | Check `ps aux | grep rkipc`; if missing, `RkLunch.sh` may have failed — reboot |
+| `/api/capture` returns "No snapshots yet" | rkipc just started — wait 10s for first snapshot; check `ls /mnt/sdcard/video0/` |
+| `/api/capture` returns "Snapshot incomplete after 2s" | rkipc is writing slowly — check SD card health; try rebooting |
+| Snapshots not appearing in `/mnt/sdcard/` | Check `free_size_del_min` in rkipc ini — if SD card has <50MB free, rkipc won't write |
+| SD card filling up fast with JPEGs | `cleanup_snapshots()` daemon not running — check Python server started correctly |
+| `/api/stream` updates very slowly | Check `snapshot_interval_ms` in `/oem/usr/share/rkipc-300w.ini` — should be 200 |
+| rkipc config changes not persisting across reboot | Edit `/oem/usr/share/rkipc-300w.ini` — NOT `/userdata/rkipc.ini` (overwritten on boot) |
 
 ### Debug Commands
 
 ```bash
-ssh root@192.168.1.60 "killall luckfox_gui; /root/Executables/luckfox_gui"
+# Board connectivity
+ssh root@192.168.1.60 "ps aux | grep -E 'luckfox_gui|http_api|rkipc'"
 dmesg | tail -30
-ps aux | grep -E "luckfox_gui|http_api"
+
+# GUI / IPC
+ssh root@192.168.1.60 "killall luckfox_gui; /root/Executables/luckfox_gui"
 ls -la /tmp/luckfox_gui.sock
+
+# Camera
+ssh root@192.168.1.60 "ls -lht /mnt/sdcard/video0/ | head -10"
+ssh root@192.168.1.60 "df -h /mnt/sdcard"
+ssh root@192.168.1.60 "grep -E 'snapshot_interval|mount_path|free_size' /oem/usr/share/rkipc-300w.ini"
+
+# Client testing (from MacBook)
+python3 client/luckfox_remote.py camera-status
+python3 client/luckfox_remote.py capture -o /tmp/frame.jpg && open /tmp/frame.jpg
 ```
