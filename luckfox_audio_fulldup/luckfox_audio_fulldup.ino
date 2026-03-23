@@ -328,7 +328,7 @@ void capture_and_send_mic() {
     for (uint16_t i = 0; i < samples; i++) {
         // Remove DC offset in 32-bit domain, then extract top 16 bits
         int32_t corrected = raw32[i] - mic_dc_offset;
-        pcm16[i] = (int16_t)(corrected >> 16);
+        pcm16[i] = (int16_t)(corrected >> 8);
     }
 
     send_packet(PKT_MIC_DATA, (uint8_t*)pcm16, samples * 2);
