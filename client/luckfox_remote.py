@@ -105,6 +105,9 @@ available commands & API endpoints:
   audio <file>          POST /api/audio/play           upload and play a WAV file on the board
   tone                  POST /api/audio/tone           play a sine-wave test tone
   audio-stop            GET  /api/audio/stop           stop audio playback
+  record-status         GET  /api/audio/record_status  mic recording state + bytes captured
+  record-start          GET  /api/audio/record/start   start mic recording (simulates CTRL press)
+  record-stop           GET  /api/audio/record/stop    stop mic recording + report WAV size
 
 camera:
   The board runs rkipc (Rockchip IPC daemon) providing an RTSP stream at 25fps.
@@ -132,6 +135,9 @@ examples:
   %(prog)s tone --freq 880 --duration 2
   %(prog)s audio response.wav
   %(prog)s audio-stop
+  %(prog)s record-start
+  %(prog)s record-status
+  %(prog)s record-stop
 
   %(prog)s --host 192.168.1.60 status
   %(prog)s --host 192.168.1.60 capture -o frame.jpg
@@ -170,6 +176,10 @@ examples:
     p_tone.add_argument("--duration", type=int, default=3, help="Duration in seconds (default: 3)")
 
     sub.add_parser("audio-stop", help="GET /api/audio/stop — stop audio playback")
+
+    sub.add_parser("record-status", help="GET /api/audio/record_status — mic state + bytes captured")
+    sub.add_parser("record-start", help="GET /api/audio/record/start — start recording (simulates CTRL press)")
+    sub.add_parser("record-stop", help="GET /api/audio/record/stop — stop recording + report WAV size")
 
     args = parser.parse_args()
 
@@ -232,6 +242,18 @@ examples:
 
     elif args.command == "audio-stop":
         result = api_get(base, "/api/audio/stop")
+        print(json.dumps(result, indent=2))
+
+    elif args.command == "record-status":
+        result = api_get(base, "/api/audio/record_status")
+        print(json.dumps(result, indent=2))
+
+    elif args.command == "record-start":
+        result = api_get(base, "/api/audio/record/start")
+        print(json.dumps(result, indent=2))
+
+    elif args.command == "record-stop":
+        result = api_get(base, "/api/audio/record/stop")
         print(json.dumps(result, indent=2))
 
 if __name__ == "__main__":

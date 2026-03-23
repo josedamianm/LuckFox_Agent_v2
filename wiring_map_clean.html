@@ -1,0 +1,367 @@
+
+<style>
+  .wm { font-family: var(--font-sans); padding: 16px 0; }
+  .wm-legend { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 18px; align-items: center; }
+  .wm-legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--color-text-secondary); }
+  .wm-legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+  .wm-grid { display: grid; grid-template-columns: 148px 1fr 148px 1fr 148px 1fr 148px; align-items: stretch; gap: 0; }
+
+  .wm-board { border-radius: 10px; padding: 10px 6px 12px; text-align: center; }
+  .wm-board-title { font-size: 13px; font-weight: 500; line-height: 1.3; margin-bottom: 3px; }
+  .wm-board-sub { font-size: 11px; opacity: 0.7; }
+
+  .b-luckfox  { background: #EEEDFE; border: 1.5px solid #7F77DD; }
+  .b-luckfox  .wm-board-title { color: #26215C; }
+  .b-luckfox  .wm-board-sub   { color: #534AB7; }
+
+  .b-esp      { background: #E1F5EE; border: 1.5px solid #1D9E75; }
+  .b-esp      .wm-board-title { color: #04342C; }
+  .b-esp      .wm-board-sub   { color: #0F6E56; }
+
+  .b-max      { background: #FAEEDA; border: 1.5px solid #BA7517; }
+  .b-max      .wm-board-title { color: #412402; }
+  .b-max      .wm-board-sub   { color: #854F0B; }
+
+  .b-mic      { background: #FAECE7; border: 1.5px solid #D85A30; }
+  .b-mic      .wm-board-title { color: #4A1B0C; }
+  .b-mic      .wm-board-sub   { color: #993C1D; }
+
+  .wm-pin-col { display: flex; flex-direction: column; justify-content: flex-start; padding: 4px 0; gap: 0; }
+  .wm-pin { height: 34px; display: flex; align-items: center; font-size: 11px; line-height: 1.2; }
+  .wm-pin.lf  { justify-content: flex-end; text-align: right; padding-right: 6px; color: #3C3489; }
+  .wm-pin.esp-l { justify-content: flex-end; text-align: right; padding-right: 6px; }
+  .wm-pin.esp-r { justify-content: flex-start; text-align: left; padding-left: 6px; }
+  .wm-pin.right { justify-content: flex-start; text-align: left; padding-left: 6px; }
+
+  .wm-pin.esp-l .pin-name,
+  .wm-pin.esp-r .pin-name { color: #085041; font-weight: 500; }
+  .wm-pin.lf .pin-name { color: #3C3489; font-weight: 500; }
+  .wm-pin .pin-name { display: block; }
+  .wm-pin .pin-func { display: block; font-size: 10px; opacity: 0.6; }
+
+  .wm-wire-col { display: flex; flex-direction: column; align-items: stretch; gap: 0; }
+  .wm-wire { height: 34px; display: flex; align-items: center; position: relative; }
+  .wm-wire-line { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); height: 3px; border-radius: 2px; }
+  .wm-wire-dot-l { position: absolute; left: -5px; top: 50%; transform: translateY(-50%); width: 10px; height: 10px; border-radius: 50%; z-index: 2; }
+  .wm-wire-dot-r { position: absolute; right: -5px; top: 50%; transform: translateY(-50%); width: 10px; height: 10px; border-radius: 50%; z-index: 2; }
+  .wm-wire-label { position: absolute; left: 50%; transform: translateX(-50%); top: -1px; font-size: 10px; white-space: nowrap; background: var(--color-background-primary); padding: 0 3px; color: var(--color-text-secondary); border-radius: 2px; line-height: 1; z-index: 3; }
+
+  .c-i2s   { background: #1D9E75; }
+  .c-uart  { background: #378ADD; }
+  .c-pwr5  { background: #BA7517; }
+  .c-pwr33 { background: #888780; }
+  .c-gnd   { background: #444441; }
+  .c-new   { background: #3B6D11; }
+
+  .wm-spacer { height: 34px; }
+  .wm-group-label { font-size: 11px; font-weight: 500; color: var(--color-text-tertiary); text-align: center; padding: 6px 0 2px; letter-spacing: 0.04em; }
+
+  .wm-section-header { grid-column: 1 / -1; font-size: 11px; font-weight: 500; color: var(--color-text-tertiary); padding: 10px 0 4px 4px; border-top: 1px solid var(--color-border-tertiary); margin-top: 4px; letter-spacing: 0.05em; }
+  .wm-section-header:first-child { border-top: none; margin-top: 0; }
+
+  .new-badge { display: inline-block; background: #3B6D11; color: #EAF3DE; font-size: 10px; font-weight: 500; border-radius: 3px; padding: 1px 5px; margin-left: 4px; vertical-align: middle; }
+  .warn-badge { display: inline-block; background: #854F0B; color: #FAEEDA; font-size: 10px; font-weight: 500; border-radius: 3px; padding: 1px 5px; margin-left: 4px; vertical-align: middle; }
+
+  .wm-table { width: 100%; border-collapse: collapse; margin-top: 18px; }
+  .wm-table th { font-size: 11px; font-weight: 500; color: var(--color-text-secondary); text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--color-border-tertiary); }
+  .wm-table td { font-size: 11px; color: var(--color-text-primary); padding: 5px 8px; border-bottom: 1px solid var(--color-border-tertiary); vertical-align: middle; }
+  .wm-table tr:last-child td { border-bottom: none; }
+  .wm-table .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+  .wm-table tr.new-row td { background: #EAF3DE; }
+</style>
+
+<div class="wm">
+
+  <div class="wm-legend">
+    <div class="wm-legend-item"><div class="wm-legend-dot c-i2s"></div>I2S audio</div>
+    <div class="wm-legend-item"><div class="wm-legend-dot c-uart"></div>UART serial</div>
+    <div class="wm-legend-item"><div class="wm-legend-dot c-pwr5"></div>5 V power</div>
+    <div class="wm-legend-item"><div class="wm-legend-dot c-pwr33"></div>3.3 V power</div>
+    <div class="wm-legend-item"><div class="wm-legend-dot c-gnd"></div>GND</div>
+    <div class="wm-legend-item"><div class="wm-legend-dot c-new"></div>New wire ★</div>
+  </div>
+
+  <div class="wm-grid">
+
+    <!-- ── BOARD HEADERS ── -->
+    <div class="wm-board b-luckfox">
+      <div class="wm-board-title">LuckFox Pico Max</div>
+      <div class="wm-board-sub">RV1106 · /dev/ttyS2</div>
+    </div>
+    <div></div>
+    <div class="wm-board b-esp">
+      <div class="wm-board-title">ESP32-C3 ABRobot</div>
+      <div class="wm-board-sub">Aitver · OLED 0.42"</div>
+    </div>
+    <div></div>
+    <div class="wm-board b-max">
+      <div class="wm-board-title">MAX98357A</div>
+      <div class="wm-board-sub">Amplifier · speaker</div>
+    </div>
+    <div></div>
+    <div class="wm-board b-mic">
+      <div class="wm-board-title">INMP441</div>
+      <div class="wm-board-sub">I2S microphone</div>
+    </div>
+
+    <!-- ══ SECTION: POWER ══ -->
+    <div class="wm-section-header">Power</div>
+
+    <!-- 5V: LuckFox VBUS → MAX VIN -->
+    <div class="wm-pin lf"><span><span class="pin-name">Pin 40 VBUS</span><span class="pin-func">5 V out</span></span></div>
+    <div class="wm-wire-col"><div class="wm-wire">
+      <div class="wm-wire-line c-pwr5" style="left:5px;right:5px"></div>
+      <div class="wm-wire-dot-l c-pwr5"></div>
+      <div class="wm-wire-dot-r c-pwr5"></div>
+    </div></div>
+    <div class="wm-pin esp-l"><span><span class="pin-name">— pass-through</span><span class="pin-func">not connected</span></span></div>
+    <div class="wm-wire-col"><div class="wm-wire">
+      <div class="wm-wire-line c-pwr5" style="left:5px;right:5px;opacity:0.15"></div>
+    </div></div>
+    <div class="wm-pin right"><span><span class="pin-name" style="color:#854F0B">VIN</span><span class="pin-func" style="color:#854F0B">5 V in</span></span></div>
+    <div class="wm-wire-col"><div class="wm-wire"></div></div>
+    <div class="wm-pin right"><span style="color:var(--color-text-tertiary);font-size:10px">—</span></div>
+
+    <!-- 3V3: ESP → INMP441 VDD -->
+    <div class="wm-pin lf"><span style="color:var(--color-text-tertiary);font-size:10px">—</span></div>
+    <div class="wm-wire-col"><div class="wm-wire"></div></div>
+    <div class="wm-pin esp-r"><span><span class="pin-name">3V3 pin</span><span class="pin-func">3.3 V out</span></span></div>
+    <div class="wm-wire-col"><div class="wm-wire">
+      <div class="wm-wire-line c-pwr33" style="left:5px;right:5px;opacity:0.5"></div>
+    </div></div>
+    <div class="wm-pin right"><span style="color:var(--color-text-tertiary);font-size:10px">—</span></div>
+    <div class="wm-wire-col"><div class="wm-wire">
+      <div class="wm-wire-line c-pwr33" style="left:5px;right:5px"></div>
+      <div class="wm-wire-dot-l c-pwr33"></div>
+      <div class="wm-wire-dot-r c-pwr33"></div>
+    </div></div>
+    <div class="wm-pin right"><span><span class="pin-name" style="color:#5F5E5A">VDD</span><span class="pin-func">3.3 V max!</span></span></div>
+
+    <!-- GND common -->
+    <div class="wm-pin lf"><span><span class="pin-name">GND</span><span class="pin-func">any GND pin</span></span></div>
+    <div class="wm-wire-col"><div class="wm-wire">
+      <div class="wm-wire-line c-gnd" style="left:5px;right:5px;height:2px;opacity:0.5;border-top:2px dashed #444441;background:none"></div>
+    </div></div>
+    <div class="wm-pin esp-l" style="justify-content:center;text-align:center"><span><span class="pin-name">GND</span><span class="pin-func">common</span></span></div>
+    <div class="wm-wire-col"><div class="wm-wire">
+      <div class="wm-wire-line c-gnd" style="left:5px;right:5px;height:2px;opacity:0.5;border-top:2px dashed #444441;background:none"></div>
+    </div></div>
+    <div class="wm-pin right"><span><span class="pin-name" style="color:#444441">GND</span></span></div>
+    <div class="wm-wire-col"><div class="wm-wire">
+      <div class="wm-wire-line c-gnd" style="left:5px;right:5px;height:2px;opacity:0.5;border-top:2px dashed #444441;background:none"></div>
+    </div></div>
+    <div class="wm-pin right"><span><span class="pin-name" style="color:#444441">GND</span><span class="pin-func">+ L/R → GND</span></span></div>
+
+    <!-- ══ SECTION: UART ══ -->
+    <div class="wm-section-header">UART serial link (LuckFox ↔ ESP32-C3)</div>
+
+    <!-- TX: LuckFox → ESP32 -->
+    <div class="wm-pin lf"><span><span class="pin-name">Pin 1 · GPIO1_B1</span><span class="pin-func">UART2_TX</span></span></div>
+    <div class="wm-wire-col"><div class="wm-wire">
+      <div class="wm-wire-line c-uart" style="left:5px;right:5px"></div>
+      <div class="wm-wire-dot-l c-uart"></div>
+      <div class="wm-wire-dot-r c-uart"></div>
+      <div class="wm-wire-label">TX → RX</div>
+    </div></div>
+    <div class="wm-pin esp-l"><span><span class="pin-name">GPIO4</span><span class="pin-func">UART1 RX</span></span></div>
+    <div class="wm-wire-col"><div class="wm-wire"></div></div>
+    <div class="wm-pin right"><span style="color:var(--color-text-tertiary);font-size:10px">—</span></div>
+    <div class="wm-wire-col"><div class="wm-wire"></div></div>
+    <div class="wm-pin right"><span style="color:var(--color-text-tertiary);font-size:10px">—</span></div>
+
+    <!-- RX: ESP32 → LuckFox -->
+    <div class="wm-pin lf"><span><span class="pin-name">Pin 2 · GPIO1_B3</span><span class="pin-func">UART2_RX</span></span></div>
+    <div class="wm-wire-col"><div class="wm-wire">
+      <div class="wm-wire-line c-uart" style="left:5px;right:5px"></div>
+      <div class="wm-wire-dot-l c-uart"></div>
+      <div class="wm-wire-dot-r c-uart"></div>
+      <div class="wm-wire-label">RX ← TX</div>
+    </div></div>
+    <div class="wm-pin esp-l"><span><span class="pin-name">GPIO7</span><span class="pin-func">UART1 TX</span></span></div>
+    <div class="wm-wire-col"><div class="wm-wire"></div></div>
+    <div class="wm-pin right"><span style="color:var(--color-text-tertiary);font-size:10px">—</span></div>
+    <div class="wm-wire-col"><div class="wm-wire"></div></div>
+    <div class="wm-pin right"><span style="color:var(--color-text-tertiary);font-size:10px">—</span></div>
+
+    <!-- ══ SECTION: I2S SHARED BUS ══ -->
+    <div class="wm-section-header">I2S shared bus (BCLK + WS shared by both audio devices)</div>
+
+    <!-- BCLK -->
+    <div class="wm-pin lf"><span style="color:var(--color-text-tertiary);font-size:10px">—</span></div>
+    <div class="wm-wire-col"><div class="wm-wire"></div></div>
+    <div class="wm-pin esp-r"><span><span class="pin-name">GPIO0</span><span class="pin-func">I2S BCLK out</span></span></div>
+    <div class="wm-wire-col"><div class="wm-wire">
+      <div class="wm-wire-line c-i2s" style="left:5px;right:5px"></div>
+      <div class="wm-wire-dot-l c-i2s"></div>
+      <div class="wm-wire-dot-r c-i2s"></div>
+      <div class="wm-wire-label">BCLK</div>
+    </div></div>
+    <div class="wm-pin right"><span><span class="pin-name" style="color:#085041">BCLK</span></span></div>
+    <div class="wm-wire-col"><div class="wm-wire">
+      <div class="wm-wire-line c-i2s" style="left:5px;right:5px"></div>
+      <div class="wm-wire-dot-l c-i2s"></div>
+      <div class="wm-wire-dot-r c-i2s"></div>
+      <div class="wm-wire-label">BCLK</div>
+    </div></div>
+    <div class="wm-pin right"><span><span class="pin-name" style="color:#085041">BCLK</span></span></div>
+
+    <!-- LRC / WS -->
+    <div class="wm-pin lf"><span style="color:var(--color-text-tertiary);font-size:10px">—</span></div>
+    <div class="wm-wire-col"><div class="wm-wire"></div></div>
+    <div class="wm-pin esp-r"><span><span class="pin-name">GPIO1</span><span class="pin-func">I2S LRC / WS out</span></span></div>
+    <div class="wm-wire-col"><div class="wm-wire">
+      <div class="wm-wire-line c-i2s" style="left:5px;right:5px"></div>
+      <div class="wm-wire-dot-l c-i2s"></div>
+      <div class="wm-wire-dot-r c-i2s"></div>
+      <div class="wm-wire-label">LRC / WS</div>
+    </div></div>
+    <div class="wm-pin right"><span><span class="pin-name" style="color:#085041">LRC</span></span></div>
+    <div class="wm-wire-col"><div class="wm-wire">
+      <div class="wm-wire-line c-i2s" style="left:5px;right:5px"></div>
+      <div class="wm-wire-dot-l c-i2s"></div>
+      <div class="wm-wire-dot-r c-i2s"></div>
+      <div class="wm-wire-label">WS</div>
+    </div></div>
+    <div class="wm-pin right"><span><span class="pin-name" style="color:#085041">WS</span></span></div>
+
+    <!-- ══ SECTION: I2S DATA ══ -->
+    <div class="wm-section-header">I2S data lines (each device has its own data wire)</div>
+
+    <!-- DOUT → MAX DIN (speaker) -->
+    <div class="wm-pin lf"><span style="color:var(--color-text-tertiary);font-size:10px">—</span></div>
+    <div class="wm-wire-col"><div class="wm-wire"></div></div>
+    <div class="wm-pin esp-r"><span><span class="pin-name">GPIO2 ⚠</span><span class="pin-func">I2S DOUT (spkr)</span></span></div>
+    <div class="wm-wire-col"><div class="wm-wire">
+      <div class="wm-wire-line c-i2s" style="left:5px;right:5px"></div>
+      <div class="wm-wire-dot-l c-i2s"></div>
+      <div class="wm-wire-dot-r c-i2s"></div>
+      <div class="wm-wire-label">audio out</div>
+    </div></div>
+    <div class="wm-pin right"><span><span class="pin-name" style="color:#085041">DIN</span><span class="pin-func">data in</span></span></div>
+    <div class="wm-wire-col"><div class="wm-wire"></div></div>
+    <div class="wm-pin right"><span style="color:var(--color-text-tertiary);font-size:10px">—</span></div>
+
+    <!-- GPIO3 SD/EN amp enable -->
+    <div class="wm-pin lf"><span style="color:var(--color-text-tertiary);font-size:10px">—</span></div>
+    <div class="wm-wire-col"><div class="wm-wire"></div></div>
+    <div class="wm-pin esp-r"><span><span class="pin-name">GPIO3</span><span class="pin-func">AMP SD/EN</span></span></div>
+    <div class="wm-wire-col"><div class="wm-wire">
+      <div class="wm-wire-line c-pwr5" style="left:5px;right:5px;opacity:0.6"></div>
+      <div class="wm-wire-dot-l c-pwr5"></div>
+      <div class="wm-wire-dot-r c-pwr5"></div>
+      <div class="wm-wire-label">HIGH=on</div>
+    </div></div>
+    <div class="wm-pin right"><span><span class="pin-name" style="color:#854F0B">SD/EN</span><span class="pin-func">enable pin</span></span></div>
+    <div class="wm-wire-col"><div class="wm-wire"></div></div>
+    <div class="wm-pin right"><span style="color:var(--color-text-tertiary);font-size:10px">—</span></div>
+
+    <!-- GPIO10 DIN ← INMP441 SD (NEW) -->
+    <div class="wm-pin lf"><span style="color:var(--color-text-tertiary);font-size:10px">—</span></div>
+    <div class="wm-wire-col"><div class="wm-wire"></div></div>
+    <div class="wm-pin esp-r"><span><span class="pin-name">GPIO10 ★</span><span class="pin-func">I2S DIN (mic)</span></span></div>
+    <div class="wm-wire-col"><div class="wm-wire"></div></div>
+    <div class="wm-pin right"><span style="color:var(--color-text-tertiary);font-size:10px">—</span></div>
+    <div class="wm-wire-col"><div class="wm-wire">
+      <div class="wm-wire-line c-new" style="left:5px;right:5px"></div>
+      <div class="wm-wire-dot-l c-new"></div>
+      <div class="wm-wire-dot-r c-new"></div>
+      <div class="wm-wire-label">mic data ★</div>
+    </div></div>
+    <div class="wm-pin right"><span><span class="pin-name" style="color:#27500A">SD (data out)</span><span class="pin-func">mic signal</span></span></div>
+
+  </div>
+
+  <!-- ══ SUMMARY TABLE ══ -->
+  <table class="wm-table" style="margin-top:20px">
+    <thead>
+      <tr>
+        <th>Signal</th>
+        <th>From</th>
+        <th>To</th>
+        <th>Wire</th>
+        <th>Note</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="dot c-pwr5"></span>5 V power</td>
+        <td>LuckFox Pin 40 VBUS</td>
+        <td>MAX98357A VIN</td>
+        <td>Red · 5 V</td>
+        <td>2.5–5.5 V range, safe</td>
+      </tr>
+      <tr>
+        <td><span class="dot c-pwr33"></span>3.3 V power</td>
+        <td>ESP32-C3 3V3 pin</td>
+        <td>INMP441 VDD</td>
+        <td>Orange · 3.3 V</td>
+        <td>Never exceed 3.3 V on mic</td>
+      </tr>
+      <tr>
+        <td><span class="dot c-gnd"></span>GND</td>
+        <td>LuckFox any GND</td>
+        <td>ESP32 · MAX · INMP441</td>
+        <td>Black · common</td>
+        <td>All boards share ground</td>
+      </tr>
+      <tr>
+        <td><span class="dot c-gnd"></span>INMP441 L/R</td>
+        <td>INMP441 L/R pin</td>
+        <td>GND</td>
+        <td>Black · tie to GND</td>
+        <td>Selects left channel</td>
+      </tr>
+      <tr>
+        <td><span class="dot c-uart"></span>UART TX</td>
+        <td>LuckFox Pin 1 GPIO1_B1</td>
+        <td>ESP32-C3 GPIO4</td>
+        <td>Blue</td>
+        <td>LuckFox → ESP32 data</td>
+      </tr>
+      <tr>
+        <td><span class="dot c-uart"></span>UART RX</td>
+        <td>LuckFox Pin 2 GPIO1_B3</td>
+        <td>ESP32-C3 GPIO7</td>
+        <td>Blue</td>
+        <td>ESP32 → LuckFox data</td>
+      </tr>
+      <tr>
+        <td><span class="dot c-i2s"></span>I2S BCLK</td>
+        <td>ESP32-C3 GPIO0</td>
+        <td>MAX98357A BCLK + INMP441 BCLK</td>
+        <td>Green · fork to both</td>
+        <td>Shared clock line</td>
+      </tr>
+      <tr>
+        <td><span class="dot c-i2s"></span>I2S WS / LRC</td>
+        <td>ESP32-C3 GPIO1</td>
+        <td>MAX98357A LRC + INMP441 WS</td>
+        <td>Green · fork to both</td>
+        <td>Shared word select</td>
+      </tr>
+      <tr>
+        <td><span class="dot c-i2s"></span>I2S DOUT</td>
+        <td>ESP32-C3 GPIO2</td>
+        <td>MAX98357A DIN</td>
+        <td>Green</td>
+        <td>⚠ strapping pin, add 10kΩ pull-up if needed</td>
+      </tr>
+      <tr>
+        <td><span class="dot" style="background:#BA7517"></span>AMP enable</td>
+        <td>ESP32-C3 GPIO3</td>
+        <td>MAX98357A SD/EN</td>
+        <td>Yellow</td>
+        <td>Keep HIGH to enable amp</td>
+      </tr>
+      <tr class="new-row">
+        <td><span class="dot c-new"></span><strong>I2S DIN ★ new</strong></td>
+        <td><strong>INMP441 SD</strong></td>
+        <td><strong>ESP32-C3 GPIO10</strong></td>
+        <td><strong>Green · 1 wire</strong></td>
+        <td><strong>Only new wire needed</strong></td>
+      </tr>
+    </tbody>
+  </table>
+
+</div>

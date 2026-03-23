@@ -18,6 +18,7 @@ from gui_client import GUIClient
 
 try:
     import audio_sender
+    from audio_sender import MicReceiver
     HAS_AUDIO = True
 except ImportError:
     HAS_AUDIO = False
@@ -29,6 +30,7 @@ RTSP_URL   = "rtsp://127.0.0.1/live/0"
 FFMPEG     = "/mnt/sdcard/ffmpeg"
 
 gui = None
+mic_receiver = None
 
 
 def get_ipv4(iface):
@@ -79,11 +81,21 @@ def on_button_event(msg):
     state = msg.get("state")
     print(f"[btn] {name} {state}")
 
-    if name == "A":
+    if name == "CTRL":
         if state == "pressed":
             gui.set_state("listening")
+            if mic_receiver:
+                mic_receiver.start_recording()
+            if HAS_AUDIO:
+                audio_sender.send_audio_start(16000, 16, 1)
         elif state == "released":
             gui.set_state("thinking")
+            if HAS_AUDIO:
+                audio_sender.send_audio_stop()
+            if mic_receiver:
+                mic_receiver.stop_recording()
+                wav_bytes = mic_receiver.get_wav()
+                print(f"[mic] recorded {len(wav_bytes)} bytes WAV")
 
 
 class APIHandler(BaseHTTPRequestHandler):
@@ -128,6 +140,46 @@ class APIHandler(BaseHTTPRequestHandler):
                 'rkipc_running': rkipc_running(),
                 'rtsp_url': RTSP_URL,
             })
+
+        elif path == '/api/audio/record_status':
+            if mic_receiver:
+                with mic_receiver._lock:
+                    self._json(200, {
+                        'recording': mic_receiver._recording,
+                        'bytes_captured': len(mic_receiver._pcm_buf),
+                        'sample_rate': mic_receiver._sample_rate,
+                    })
+            else:
+                self._json(503, {'error': 'MicReceiver not available'})
+
+        elif path == '/api/audio/record/start':
+            if not HAS_AUDIO or not mic_receiver:
+                self._json(503, {'error': 'MicReceiver not available'})
+            else:
+                mic_receiver.start_recording()
+                print("[mic] start_recording set, sending PKT_AUDIO_START")
+                try:
+                    audio_sender.send_audio_start(16000, 16, 1)
+                    print("[mic] PKT_AUDIO_START sent OK")
+                except Exception as e:
+                    print(f"[mic] send_audio_start FAILED: {e}")
+                gui.set_state('listening')
+                self._json(200, {'recording': True})
+
+        elif path == '/api/audio/record/stop':
+            if not HAS_AUDIO or not mic_receiver:
+                self._json(503, {'error': 'MicReceiver not available'})
+            else:
+                audio_sender.send_audio_stop()
+                mic_receiver.stop_recording()
+                wav_bytes = mic_receiver.get_wav()
+                gui.set_state('thinking')
+                print(f"[mic] recorded {len(wav_bytes)} bytes WAV")
+                self._json(200, {
+                    'recording': False,
+                    'bytes_captured': len(wav_bytes) - 44,  # minus WAV header
+                    'wav_size': len(wav_bytes),
+                })
 
         elif path == '/api/audio/stop':
             if not HAS_AUDIO:
@@ -203,10 +255,14 @@ class APIHandler(BaseHTTPRequestHandler):
 
 
 def main():
-    global gui
+    global gui, mic_receiver
 
     print("LuckFox Agent V2 HTTP API Server")
     print(f"Audio support: {HAS_AUDIO}")
+
+    if HAS_AUDIO and getattr(audio_sender, 'ser', None):
+        mic_receiver = MicReceiver(audio_sender.ser)
+        print("[mic] MicReceiver started")
 
     gui = GUIClient(event_callback=on_button_event)
 
