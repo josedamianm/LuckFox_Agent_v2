@@ -106,8 +106,9 @@ available commands & API endpoints:
   tone                  POST /api/audio/tone           play a sine-wave test tone
   audio-stop            GET  /api/audio/stop           stop audio playback
   record-status         GET  /api/audio/record_status  mic recording state + bytes captured
-  record-start          GET  /api/audio/record/start   start mic recording (simulates CTRL press)
-  record-stop           GET  /api/audio/record/stop    stop mic recording + report WAV size
+  record-start          GET  /api/audio/record/start    start mic recording (simulates CTRL press)
+  record-stop           GET  /api/audio/record/stop     stop mic recording + report WAV size
+  record-download       GET  /api/audio/record/download download last recording as WAV file
 
 camera:
   The board runs rkipc (Rockchip IPC daemon) providing an RTSP stream at 25fps.
@@ -180,6 +181,8 @@ examples:
     sub.add_parser("record-status", help="GET /api/audio/record_status — mic state + bytes captured")
     sub.add_parser("record-start", help="GET /api/audio/record/start — start recording (simulates CTRL press)")
     sub.add_parser("record-stop", help="GET /api/audio/record/stop — stop recording + report WAV size")
+    p_dl = sub.add_parser("record-download", help="GET /api/audio/record/download — download last WAV")
+    p_dl.add_argument("-o", "--output", default="recording.wav", help="Output file (default: recording.wav)")
 
     args = parser.parse_args()
 
@@ -255,6 +258,17 @@ examples:
     elif args.command == "record-stop":
         result = api_get(base, "/api/audio/record/stop")
         print(json.dumps(result, indent=2))
+
+    elif args.command == "record-download":
+        print(f"Downloading recording...", file=sys.stderr)
+        data, content_type, err = api_get_binary(base, "/api/audio/record/download", timeout=10)
+        if data:
+            with open(args.output, "wb") as f:
+                f.write(data)
+            print(f"Saved {len(data)} bytes to {args.output}", file=sys.stderr)
+        else:
+            print(f"Download failed: {err}", file=sys.stderr)
+            sys.exit(1)
 
 if __name__ == "__main__":
     main()

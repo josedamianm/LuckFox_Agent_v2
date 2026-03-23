@@ -134,28 +134,22 @@ class AudioSender:
 
 class MicReceiver:
     """
-    Runs in a background thread, reads PKT_MIC_DATA packets from the ESP32-C3
-    over /dev/ttyS2, and accumulates raw 16-bit PCM into a buffer.
-    Call start_recording() before PKT_AUDIO_START is sent.
-    Call stop_recording() after PKT_AUDIO_STOP is sent.
-    Call get_wav() to retrieve the recorded audio as a WAV bytes object.
+    Background thread: reads PKT_MIC_DATA from ESP32-C3 over shared UART.
+    Uses bulk reads + internal byte buffer for speed at 921600 baud.
     """
 
     SYNC_0 = 0xAA
     SYNC_1 = 0x55
 
     def __init__(self, serial_port):
-        """
-        serial_port: the same serial.Serial instance used by audio_sender
-                     (already open at 921600 baud on /dev/ttyS2)
-        """
         self._ser = serial_port
         self._pcm_buf = bytearray()
         self._recording = False
         self._lock = threading.Lock()
+        self._sample_rate = 16000
+        self._rx_buf = bytearray()          # internal read buffer
         self._thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._thread.start()
-        self._sample_rate = 16000   # updated when PKT_MIC_START received
 
     def start_recording(self):
         with self._lock:
@@ -167,87 +161,79 @@ class MicReceiver:
             self._recording = False
 
     def get_wav(self):
-        """Returns a bytes object containing a valid WAV file (16-bit, mono)."""
         with self._lock:
             pcm = bytes(self._pcm_buf)
         buf = io.BytesIO()
         with wave.open(buf, 'wb') as wf:
             wf.setnchannels(1)
-            wf.setsampwidth(2)          # 16-bit = 2 bytes per sample
+            wf.setsampwidth(2)
             wf.setframerate(self._sample_rate)
             wf.writeframes(pcm)
         return buf.getvalue()
 
-    def _reader_loop(self):
-        """Packet parser — mirrors the ESP32 process_byte() state machine."""
-        WAIT_SYNC0, WAIT_SYNC1, READ_TYPE, READ_LEN0, READ_LEN1, READ_PAYLOAD, READ_CHECKSUM = range(7)
-        state = WAIT_SYNC0
-        pkt_type = 0
-        pkt_len = 0
-        payload = bytearray()
-        running_xor = 0
-        _dbg_bytes = 0
-        _dbg_pkts = 0
+    def _read_bytes(self, n):
+        """Read exactly n bytes from serial, using internal buffer for efficiency."""
+        while len(self._rx_buf) < n:
+            # Bulk read — grab everything available (up to 4096)
+            waiting = self._ser.in_waiting
+            if waiting > 0:
+                chunk = self._ser.read(min(waiting, 4096))
+                if chunk:
+                    self._rx_buf.extend(chunk)
+            else:
+                # Nothing waiting — short sleep to avoid busy-spin
+                chunk = self._ser.read(1)  # blocks up to timeout
+                if chunk:
+                    self._rx_buf.extend(chunk)
+        result = bytes(self._rx_buf[:n])
+        self._rx_buf = self._rx_buf[n:]
+        return result
 
+    def _reader_loop(self):
+        """Packet parser — bulk-read version for high throughput."""
         while True:
             try:
-                b = self._ser.read(1)
-                if not b:
+                # ── Wait for sync bytes ────
+                b = self._read_bytes(1)
+                if b[0] != self.SYNC_0:
                     continue
-                b = b[0]
-                _dbg_bytes += 1
-                if _dbg_bytes <= 5:
-                    print(f"[mic_rx] byte {_dbg_bytes}: 0x{b:02x}")
-            except Exception:
+                b = self._read_bytes(1)
+                if b[0] != self.SYNC_1:
+                    continue
+
+                # ── Read header: type(1) + len(2) ────
+                hdr = self._read_bytes(3)
+                pkt_type = hdr[0]
+                pkt_len = hdr[1] | (hdr[2] << 8)
+
+                if pkt_len > 1024:
+                    continue  # invalid, resync
+
+                # ── Read payload + checksum in one bulk read ────
+                body = self._read_bytes(pkt_len + 1)  # payload + 1 byte checksum
+                payload = body[:pkt_len]
+                checksum = body[pkt_len]
+
+                # ── Verify checksum ────
+                running_xor = pkt_type ^ (pkt_len & 0xFF) ^ ((pkt_len >> 8) & 0xFF)
+                for byte in payload:
+                    running_xor ^= byte
+
+                if checksum != running_xor:
+                    continue  # bad checksum, skip
+
+                # ── Handle packet ────
+                self._handle_packet(pkt_type, payload)
+
+            except Exception as e:
+                time.sleep(0.01)
                 continue
-
-            if state == WAIT_SYNC0:
-                if b == self.SYNC_0:
-                    state = WAIT_SYNC1
-
-            elif state == WAIT_SYNC1:
-                state = READ_TYPE if b == self.SYNC_1 else WAIT_SYNC0
-
-            elif state == READ_TYPE:
-                pkt_type = b
-                running_xor = b
-                state = READ_LEN0
-
-            elif state == READ_LEN0:
-                pkt_len = b
-                running_xor ^= b
-                state = READ_LEN1
-
-            elif state == READ_LEN1:
-                pkt_len |= (b << 8)
-                running_xor ^= b
-                payload = bytearray()
-                if pkt_len == 0:
-                    state = READ_CHECKSUM
-                elif pkt_len <= 1024:
-                    state = READ_PAYLOAD
-                else:
-                    state = WAIT_SYNC0
-
-            elif state == READ_PAYLOAD:
-                payload.append(b)
-                running_xor ^= b
-                if len(payload) >= pkt_len:
-                    state = READ_CHECKSUM
-
-            elif state == READ_CHECKSUM:
-                if b == running_xor:
-                    _dbg_pkts += 1
-                    print(f"[mic_rx] pkt #{_dbg_pkts} type=0x{pkt_type:02x} len={pkt_len}")
-                    self._handle_packet(pkt_type, payload)
-                else:
-                    print(f"[mic_rx] checksum FAIL type=0x{pkt_type:02x} got=0x{b:02x} want=0x{running_xor:02x}")
-                state = WAIT_SYNC0
 
     def _handle_packet(self, ptype, data):
         if ptype == PKT_MIC_START:
             if len(data) >= 2:
                 self._sample_rate = data[0] | (data[1] << 8)
+                print(f"[mic_rx] MIC_START rate={self._sample_rate}")
 
         elif ptype == PKT_MIC_DATA:
             with self._lock:
@@ -255,6 +241,7 @@ class MicReceiver:
                     self._pcm_buf.extend(data)
 
         elif ptype == PKT_MIC_STOP:
+            print("[mic_rx] MIC_STOP received")
             with self._lock:
                 self._recording = False
 

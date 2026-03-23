@@ -1,8 +1,8 @@
 /*
- * ESP32-C3 Audio Hardware Test v2.0 — legacy driver/i2s.h
+ * ESP32-C3 Audio Hardware Test v3.1 — with OLED (SH1106 72x40)
  * ─────────────────────────────────────────────────────────────────────────────
- * Uses the legacy I2S driver (i2s.h) instead of the new i2s_std.h API.
- * The new API has a known full-duplex RX bug on ESP32-C3 (RX DMA never fills).
+ * OLED: SH1106 compatible, 72x40, offset (30,12), I2C on GPIO4(SDA)/GPIO5(SCL)
+ * Audio: INMP441 mic + MAX98357A amp, legacy I2S driver
  *
  * Wiring:
  *   I2S BCLK  → GPIO0   (shared by mic + speaker)
@@ -10,13 +10,16 @@
  *   MAX98357A DIN  → GPIO2
  *   MAX98357A SD   → GPIO3  (amp enable)
  *   INMP441 SD     → GPIO10
- *   INMP441 VDD    → 3.3V    INMP441 GND → GND    INMP441 L/R → GND
+ *   OLED SDA       → GPIO5
+ *   OLED SCL       → GPIO6
  *
- * Commands (Serial Monitor, 115200 baud):
+ * Commands (Serial 115200):
  *   'r' — init I2S
- *   'm' — mic test  (5s capture, reports bytes + peak amplitude)
- *   'p' — play test (2s 440Hz tone through speaker)
- *   'f' — full-duplex test (play tone + capture mic, 3s)
+ *   't' — record 2s + playback (high quality)
+ *   'm' — mic test (5s)
+ *   'p' — play 440Hz tone (2s)
+ *   'f' — full-duplex test (3s)
+ *   'd' — dump raw samples
  *   'i' — info
  * ─────────────────────────────────────────────────────────────────────────────
  */
@@ -24,23 +27,70 @@
 #include "driver/i2s.h"
 #include <math.h>
 #include <string.h>
+#include <U8g2lib.h>
+#include <Wire.h>
 
 // ── Pin definitions ───────────────────────────────────────────────────────────
 #define I2S_BCLK    0
 #define I2S_WS      1
-#define I2S_DOUT    2   // MAX98357A DIN
-#define SD_PIN      3   // MAX98357A SD/EN
-#define I2S_DIN     10  // INMP441 SD
+#define I2S_DOUT    2
+#define SD_PIN      3
+#define I2S_DIN     10
+
+#define OLED_SDA    5
+#define OLED_SCL    6
 
 // ── Audio config ──────────────────────────────────────────────────────────────
 #define SAMPLE_RATE  16000
-#define MIC_CHUNK    512    // bytes per i2s_read call
+#define MIC_CHUNK    512
+
+// ── Record buffer (32-bit, 2 seconds) ─────────────────────────────────────────
+#define REC_SECONDS  2
+#define REC_SAMPLES  (SAMPLE_RATE * REC_SECONDS)
+static int32_t rec_buf[REC_SAMPLES];  // 128KB
 
 static bool i2s_ready = false;
 
+// ── OLED ──────────────────────────────────────────────────────────────────────
+// SH1106 128x64 but we only use the 72x40 visible area starting at (30,12)
+U8G2_SH1106_72X40_WISE_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
+
+// ── OLED helper functions ─────────────────────────────────────────────────────
+void oled_show(const char* line1, const char* line2 = nullptr, const char* line3 = nullptr) {
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_6x10_tf);
+    if (line1) u8g2.drawStr(0, 10, line1);
+    if (line2) u8g2.drawStr(0, 23, line2);
+    if (line3) u8g2.drawStr(0, 36, line3);
+    u8g2.sendBuffer();
+}
+
+void oled_show_progress(const char* title, uint32_t current, uint32_t total) {
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_6x10_tf);
+    u8g2.drawStr(0, 10, title);
+
+    // Progress bar: 2px from each side, 8px tall
+    int barW = 68;
+    int barH = 8;
+    int barX = 2;
+    int barY = 18;
+    u8g2.drawFrame(barX, barY, barW, barH);
+    int fillW = (int)((float)current / (float)total * (barW - 2));
+    if (fillW > barW - 2) fillW = barW - 2;
+    if (fillW > 0) u8g2.drawBox(barX + 1, barY + 1, fillW, barH - 2);
+
+    // Time display
+    char timeBuf[20];
+    float sec = (float)current / (float)SAMPLE_RATE;
+    snprintf(timeBuf, sizeof(timeBuf), "%.1fs / %ds", sec, REC_SECONDS);
+    u8g2.drawStr(0, 36, timeBuf);
+
+    u8g2.sendBuffer();
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 bool setup_i2s(uint32_t rate) {
-    // Tear down any existing driver
     i2s_driver_uninstall(I2S_NUM_0);
     i2s_ready = false;
 
@@ -48,18 +98,19 @@ bool setup_i2s(uint32_t rate) {
         .mode                 = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX | I2S_MODE_RX),
         .sample_rate          = rate,
         .bits_per_sample      = I2S_BITS_PER_SAMPLE_32BIT,
-        .channel_format       = I2S_CHANNEL_FMT_ONLY_LEFT,  // INMP441 L/R=GND → LEFT
+        .channel_format       = I2S_CHANNEL_FMT_ONLY_LEFT,
         .communication_format = I2S_COMM_FORMAT_STAND_I2S,
         .intr_alloc_flags     = ESP_INTR_FLAG_LEVEL1,
-        .dma_buf_count        = 8,
-        .dma_buf_len          = 64,
+        .dma_buf_count        = 16,
+        .dma_buf_len          = 128,
         .use_apll             = false,
-        .tx_desc_auto_clear   = true,   // keeps clock running even when TX is idle
+        .tx_desc_auto_clear   = true,
     };
 
     esp_err_t err = i2s_driver_install(I2S_NUM_0, &cfg, 0, NULL);
     if (err != ESP_OK) {
         Serial.printf("[I2S] driver_install FAILED: 0x%x\n", err);
+        oled_show("I2S FAIL", "Check wiring");
         return false;
     }
 
@@ -74,14 +125,26 @@ bool setup_i2s(uint32_t rate) {
     err = i2s_set_pin(I2S_NUM_0, &pins);
     if (err != ESP_OK) {
         Serial.printf("[I2S] set_pin FAILED: 0x%x\n", err);
+        oled_show("PIN FAIL");
         return false;
     }
 
     Serial.printf("[I2S] OK — %lu Hz, 32-bit, ONLY_LEFT\n", rate);
     Serial.printf("[I2S] BCLK=GPIO%d  WS=GPIO%d  DOUT=GPIO%d  DIN=GPIO%d\n",
                   I2S_BCLK, I2S_WS, I2S_DOUT, I2S_DIN);
+    Serial.printf("[MEM] Free heap: %lu bytes\n", (unsigned long)ESP.getFreeHeap());
     i2s_ready = true;
+
+    oled_show("I2S OK", "16kHz 32bit", "Send 't'");
     return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+void flush_i2s_rx() {
+    int32_t flush[256];
+    size_t dummy;
+    for (int i = 0; i < 30; i++)
+        i2s_read(I2S_NUM_0, flush, sizeof(flush), &dummy, 5 / portTICK_PERIOD_MS);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -90,9 +153,9 @@ bool setup_i2s(uint32_t rate) {
 void test_mic() {
     if (!i2s_ready) { Serial.println("[MIC] I2S not ready — run 'r' first"); return; }
 
+    oled_show("MIC TEST", "5 seconds...", "Speak now!");
     Serial.println("\n=== MIC TEST (5 seconds) ===");
 
-    // Diagnostic: single blocking read with 500ms timeout
     Serial.println("[MIC] Diagnostic read (500ms timeout)...");
     {
         int32_t diag_buf[MIC_CHUNK / 4];
@@ -100,10 +163,6 @@ void test_mic() {
         esp_err_t diag_err = i2s_read(I2S_NUM_0, diag_buf, MIC_CHUNK, &diag_bytes,
                                        500 / portTICK_PERIOD_MS);
         Serial.printf("[MIC] --> err=0x%x  bytes=%d\n", diag_err, diag_bytes);
-        if      (diag_err == ESP_OK && diag_bytes > 0) Serial.println("[MIC] --> DMA OK, data flowing!");
-        else if (diag_err == ESP_ERR_TIMEOUT)          Serial.println("[MIC] --> TIMEOUT (hardware issue)");
-        else if (diag_err == ESP_OK && diag_bytes == 0) Serial.println("[MIC] --> OK but 0 bytes");
-        else    Serial.printf("[MIC] --> UNEXPECTED err=0x%x\n", diag_err);
     }
 
     Serial.println("Speak into the INMP441 mic now...");
@@ -134,18 +193,16 @@ void test_mic() {
                 int16_t a16 = s16 < 0 ? -s16 : s16;
                 if (a16 > peak16) peak16 = a16;
             }
-        } else {
-            static int ec = 0;
-            if (ec++ < 3) {
-                Serial.printf("[MIC] read err=0x%x (%s) bytes=%d\n", err,
-                    err == ESP_ERR_TIMEOUT ? "TIMEOUT" : "OTHER", bytes_read);
-            }
         }
 
         if (millis() >= t_report) {
+            uint32_t elapsed = (millis() - t_start) / 1000;
+            char buf[20];
+            snprintf(buf, sizeof(buf), "%lus peak:%d", elapsed, peak16);
+            oled_show("MIC TEST", buf, "Speak now!");
+
             Serial.printf("[MIC] t=%lus  reads=%lu  ok=%lu  bytes=%lu  peak32=%ld  peak16=%d\n",
-                          (millis() - t_start) / 1000, total_reads, success_reads,
-                          total_bytes, peak32, peak16);
+                          elapsed, total_reads, success_reads, total_bytes, peak32, peak16);
             peak32 = 0; peak16 = 0;
             t_report = millis() + 500;
         }
@@ -158,13 +215,11 @@ void test_mic() {
     Serial.printf("    Total bytes : %lu (%.1f KB/s)\n", total_bytes, total_bytes / 5.0f / 1024.0f);
 
     if (success_reads == 0) {
-        Serial.println("    *** NO DATA FROM MIC ***");
-        Serial.println("    INMP441 is not responding — check wiring or replace module.");
+        oled_show("MIC FAIL", "No data!", "Check wiring");
     } else if (peak16 < 100) {
-        Serial.println("    WARNING: Very low amplitude — mic alive but silent?");
-        Serial.println("    Try speaking louder directly into the INMP441.");
+        oled_show("MIC LOW", "Very quiet", "Check mic");
     } else {
-        Serial.println("    INMP441 OK — producing audio data.");
+        oled_show("MIC OK", "Data flowing", "Send 't'");
     }
 }
 
@@ -174,6 +229,7 @@ void test_mic() {
 void test_speaker() {
     if (!i2s_ready) { Serial.println("[SPK] I2S not ready — run 'r' first"); return; }
 
+    oled_show("> TONE", "440Hz 2s", "Listen...");
     Serial.println("\n=== SPEAKER TEST (440Hz tone, 2 seconds) ===");
 
     const int32_t amp = 20000;
@@ -185,7 +241,6 @@ void test_speaker() {
 
     while (millis() - t_start < 2000) {
         for (int i = 0; i < 128; i++) {
-            // 32-bit frame: place 16-bit value in upper half (bits 31:16)
             samples[i] = ((int32_t)(amp * sin(phase))) << 16;
             phase += phase_inc;
             if (phase >= 2.0 * M_PI) phase -= 2.0 * M_PI;
@@ -194,12 +249,11 @@ void test_speaker() {
         esp_err_t err = i2s_write(I2S_NUM_0, samples, sizeof(samples), &written,
                                    100 / portTICK_PERIOD_MS);
         if (err == ESP_OK) total_written += written;
-        else Serial.printf("[SPK] write err=0x%x\n", err);
     }
 
     Serial.printf("[SPK] Sent %lu bytes\n", total_written);
-    Serial.println("Did you hear 440Hz tone? If not: check MAX98357A wiring.");
     Serial.println("=== SPEAKER TEST DONE ===");
+    oled_show("> DONE", "Hear tone?", "Send 't'");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -208,8 +262,8 @@ void test_speaker() {
 void test_fullduplex() {
     if (!i2s_ready) { Serial.println("[FDX] I2S not ready — run 'r' first"); return; }
 
+    oled_show("FULL-DPX", "3 seconds", "Tone + Mic");
     Serial.println("\n=== FULL-DUPLEX TEST (3 seconds) ===");
-    Serial.println("Playing 440Hz tone AND capturing mic simultaneously...");
 
     static int32_t play_buf[64];
     static int32_t mic_buf[MIC_CHUNK / 4];
@@ -223,7 +277,6 @@ void test_fullduplex() {
     uint32_t t_end    = t_start + 3000;
 
     while (millis() < t_end) {
-        // Write tone to speaker
         for (int i = 0; i < 64; i++) {
             play_buf[i] = ((int32_t)(16000 * sin(phase))) << 16;
             phase += phase_inc;
@@ -233,7 +286,6 @@ void test_fullduplex() {
         i2s_write(I2S_NUM_0, play_buf, sizeof(play_buf), &written, 10 / portTICK_PERIOD_MS);
         total_play += written;
 
-        // Read mic (short wait)
         size_t bytes_read = 0;
         if (i2s_read(I2S_NUM_0, mic_buf, MIC_CHUNK, &bytes_read, 10 / portTICK_PERIOD_MS) == ESP_OK
                 && bytes_read > 0) {
@@ -246,65 +298,229 @@ void test_fullduplex() {
         }
 
         if (millis() >= t_report) {
-            Serial.printf("[FDX] play=%lu bytes  mic=%lu bytes  mic_peak=%d\n",
-                          total_play, total_mic, mic_peak);
+            Serial.printf("[FDX] play=%lu  mic=%lu  peak=%d\n", total_play, total_mic, mic_peak);
             mic_peak = 0;
             t_report = millis() + 1000;
         }
     }
 
     Serial.println("=== FULL-DUPLEX TEST DONE ===");
-    Serial.printf("    Played  : %lu bytes\n", total_play);
-    Serial.printf("    Captured: %lu bytes\n", total_mic);
     if (total_mic == 0)
-        Serial.println("    *** MIC captured nothing — INMP441 hardware issue ***");
+        oled_show("FDX FAIL", "No mic data");
     else
-        Serial.println("    Full-duplex OK!");
+        oled_show("FDX OK", "Both work!", "Send 't'");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RECORD & PLAYBACK (high quality)
+// ─────────────────────────────────────────────────────────────────────────────
+void test_record_playback() {
+    if (!i2s_ready) { Serial.println("[REC] I2S not ready — run 'r' first"); return; }
+
+    Serial.printf("[MEM] Free heap: %lu bytes\n", (unsigned long)ESP.getFreeHeap());
+
+    // Flush stale DMA
+    flush_i2s_rx();
+
+    // ── Record ──────────────────────────────────────────────────────────────
+    oled_show_progress("* REC", 0, REC_SAMPLES);
+    Serial.printf("\n[REC] Recording %d samples (%d sec) @ %dHz 32-bit...\n",
+                  REC_SAMPLES, REC_SECONDS, SAMPLE_RATE);
+    Serial.println("[REC] >>> SPEAK INTO THE MIC NOW! <<<");
+
+    memset(rec_buf, 0, sizeof(rec_buf));
+    uint32_t captured = 0;
+    uint32_t t_start = millis();
+    uint32_t last_oled = 0;
+
+    while (captured < REC_SAMPLES) {
+        int32_t tmp[128];
+        size_t got = 0;
+        esp_err_t err = i2s_read(I2S_NUM_0, tmp, sizeof(tmp), &got, 100 / portTICK_PERIOD_MS);
+        if (err == ESP_OK && got > 0) {
+            uint16_t n = got / 4;
+            for (uint16_t i = 0; i < n && captured < REC_SAMPLES; i++) {
+                rec_buf[captured++] = tmp[i];
+            }
+        }
+        // Update OLED ~4 times per second
+        uint32_t now = millis();
+        if (now - last_oled > 250) {
+            oled_show_progress("* REC", captured, REC_SAMPLES);
+            last_oled = now;
+        }
+    }
+    Serial.printf("[REC] Captured %lu samples in %lums\n", captured, millis() - t_start);
+
+    // ── Analyze ─────────────────────────────────────────────────────────────
+    oled_show("Analyzing...");
+
+    int32_t peak = 0;
+    int64_t dc_sum = 0;
+    for (uint32_t i = 0; i < REC_SAMPLES; i++) {
+        dc_sum += rec_buf[i];
+        int32_t v = rec_buf[i];
+        if (v < 0) v = -v;
+        if (v > peak) peak = v;
+    }
+    int32_t dc_offset = (int32_t)(dc_sum / REC_SAMPLES);
+    Serial.printf("[REC] Peak raw: %ld  DC offset: %ld\n", peak, dc_offset);
+
+    // Remove DC offset
+    for (uint32_t i = 0; i < REC_SAMPLES; i++) {
+        rec_buf[i] -= dc_offset;
+    }
+
+    // Recalculate peak
+    peak = 0;
+    for (uint32_t i = 0; i < REC_SAMPLES; i++) {
+        int32_t v = rec_buf[i];
+        if (v < 0) v = -v;
+        if (v > peak) peak = v;
+    }
+    Serial.printf("[REC] Peak after DC removal: %ld\n", peak);
+
+    // Auto-gain
+    float gain = 1.0f;
+    if (peak > 0) {
+        gain = (float)0x60000000 / (float)peak;
+        if (gain > 64.0f) gain = 64.0f;
+        if (gain < 0.5f)  gain = 0.5f;
+    }
+    Serial.printf("[REC] Auto gain: %.2fx\n", gain);
+
+    if (peak < 50000) {
+        Serial.println("[REC] WARNING: Very low signal");
+    }
+
+    // ── Playback ────────────────────────────────────────────────────────────
+    oled_show_progress("> PLAY", 0, REC_SAMPLES);
+    Serial.println("[PLAY] Playing back...");
+    delay(300);
+
+    uint32_t played = 0;
+    last_oled = 0;
+
+    while (played < REC_SAMPLES) {
+        int32_t out[128];
+        uint16_t n = min((uint32_t)128, (uint32_t)(REC_SAMPLES - played));
+        for (uint16_t i = 0; i < n; i++) {
+            int64_t amplified = (int64_t)rec_buf[played + i] * (int64_t)(gain * 256.0f);
+            amplified >>= 8;
+            if (amplified >  0x7FFFFFFFL) amplified =  0x7FFFFFFFL;
+            if (amplified < -0x7FFFFFFFL) amplified = -0x7FFFFFFFL;
+            out[i] = (int32_t)amplified;
+        }
+        size_t written = 0;
+        i2s_write(I2S_NUM_0, out, n * 4, &written, 100 / portTICK_PERIOD_MS);
+        played += n;
+
+        uint32_t now = millis();
+        if (now - last_oled > 250) {
+            oled_show_progress("> PLAY", played, REC_SAMPLES);
+            last_oled = now;
+        }
+    }
+
+    // Flush silence
+    {
+        int32_t silence[128] = {0};
+        size_t w;
+        for (int i = 0; i < 8; i++)
+            i2s_write(I2S_NUM_0, silence, sizeof(silence), &w, 50 / portTICK_PERIOD_MS);
+    }
+
+    Serial.println("[PLAY] Done.");
+    char gainBuf[20];
+    snprintf(gainBuf, sizeof(gainBuf), "Gain: %.1fx", gain);
+    oled_show("DONE!", gainBuf, "Send 't'");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 void setup() {
     Serial.begin(115200);
-    delay(3000);
+    delay(2000);
 
+    // ── OLED init ───────────────────────────────────────────────────────────
+    Wire.begin(OLED_SDA, OLED_SCL);
+    u8g2.begin();
+    u8g2.setContrast(255);  // Max brightness
+    u8g2.clearBuffer();
+    u8g2.sendBuffer();
+
+    oled_show("Booting...");
+
+    // ── Amp enable ──────────────────────────────────────────────────────────
     pinMode(SD_PIN, OUTPUT);
     digitalWrite(SD_PIN, HIGH);
 
     Serial.println("\n\n╔════════════════════════════════════════╗");
-    Serial.println("║  ESP32-C3 Audio Hardware Test v2.0    ║");
-    Serial.println("║  (legacy driver/i2s.h)                ║");
+    Serial.println("║  ESP32-C3 Audio Test v3.1 + OLED      ║");
+    Serial.println("║  SH1106 72x40 | legacy i2s.h          ║");
     Serial.println("╚════════════════════════════════════════╝");
-    Serial.printf("Pins: BCLK=%d WS=%d DOUT=%d(spk) SD_EN=%d DIN=%d(mic)\n",
+    Serial.printf("Pins: BCLK=%d WS=%d DOUT=%d SD=%d DIN=%d\n",
                   I2S_BCLK, I2S_WS, I2S_DOUT, SD_PIN, I2S_DIN);
-    Serial.println("[AMP] MAX98357A SD/EN = HIGH");
+    Serial.printf("OLED: SDA=%d SCL=%d\n", OLED_SDA, OLED_SCL);
+    Serial.printf("[MEM] Free heap: %lu bytes\n", (unsigned long)ESP.getFreeHeap());
+    Serial.printf("[REC] Buffer: %d samples x 4 = %d KB\n", REC_SAMPLES, REC_SAMPLES * 4 / 1024);
     Serial.println();
-    Serial.println("Send 'r' to init I2S, then test with 'm', 'p', 'f'.");
-    Serial.println("Commands: 'r'=init  'm'=mic  'p'=play  'f'=full-duplex  'i'=info");
+    Serial.println("Commands: r=init t=rec+play m=mic p=tone f=fdx d=dump i=info");
     Serial.println("READY.");
+
+    oled_show("READY", "Send 'r'", "then 't'");
 }
 
 void loop() {
     if (!Serial.available()) return;
     char cmd = Serial.read();
-    while (Serial.available()) Serial.read();  // flush
+    while (Serial.available()) Serial.read();
 
     switch (cmd) {
         case 'r':
-            Serial.println("[RESET] Initialising I2S (legacy driver)...");
+            Serial.println("[RESET] Initialising I2S...");
+            oled_show("Init I2S...");
             if (setup_i2s(SAMPLE_RATE))
                 Serial.println("[RESET] Done.");
             break;
-        case 'm': test_mic();        break;
-        case 'p': test_speaker();    break;
-        case 'f': test_fullduplex(); break;
+        case 'm': test_mic();              break;
+        case 'p': test_speaker();          break;
+        case 'f': test_fullduplex();       break;
+        case 't': test_record_playback();  break;
+        case 'd': {
+            if (!i2s_ready) { Serial.println("Run 'r' first"); break; }
+            oled_show("RAW DUMP", "Speak now!");
+            Serial.println("\n=== RAW SAMPLE DUMP ===");
+            flush_i2s_rx();
+            int32_t buf[16];
+            size_t got = 0;
+            i2s_read(I2S_NUM_0, buf, sizeof(buf), &got, 500 / portTICK_PERIOD_MS);
+            Serial.printf("bytes_read=%d\n", got);
+            for (int i = 0; i < (int)(got / 4); i++) {
+                int32_t v = buf[i];
+                Serial.printf("[%2d] raw32=0x%08X  >>8=%6d  >>11=%6d  >>16=%6d\n",
+                    i, (unsigned)v,
+                    (int)(int16_t)(v >> 8),
+                    (int)(int16_t)(v >> 11),
+                    (int)(int16_t)(v >> 16));
+            }
+            Serial.println("=== END DUMP ===");
+            oled_show("DUMP DONE", "Send 't'");
+            break;
+        }
         case 'i':
             Serial.printf("i2s_ready=%s  SD_PIN(GPIO%d)=%s\n",
                           i2s_ready ? "true" : "false",
                           SD_PIN,
                           digitalRead(SD_PIN) ? "HIGH(amp on)" : "LOW(amp off)");
+            Serial.printf("Free heap: %lu bytes\n", (unsigned long)ESP.getFreeHeap());
+            {
+                char heapBuf[20];
+                snprintf(heapBuf, sizeof(heapBuf), "Heap:%luK", (unsigned long)ESP.getFreeHeap() / 1024);
+                oled_show("INFO", i2s_ready ? "I2S: OK" : "I2S: OFF", heapBuf);
+            }
             break;
         default:
-            Serial.println("Commands: 'r'=init 'm'=mic 'p'=play 'f'=full-duplex 'i'=info");
+            Serial.println("Commands: r=init t=rec+play m=mic p=tone f=fdx d=dump i=info");
             break;
     }
 }

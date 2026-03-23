@@ -181,6 +181,16 @@ class APIHandler(BaseHTTPRequestHandler):
                     'wav_size': len(wav_bytes),
                 })
 
+        elif path == '/api/audio/record/download':
+            if not mic_receiver:
+                self._json(503, {'error': 'MicReceiver not available'})
+            else:
+                wav_bytes = mic_receiver.get_wav()
+                if len(wav_bytes) <= 44:
+                    self._json(404, {'error': 'No recording available'})
+                else:
+                    self._binary(200, wav_bytes, 'audio/wav')
+
         elif path == '/api/audio/stop':
             if not HAS_AUDIO:
                 self._json(503, {'error': 'Audio not available'})
