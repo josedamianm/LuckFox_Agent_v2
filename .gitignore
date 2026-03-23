@@ -5,6 +5,7 @@ lvgl_gui/lib/lvgl/
 *.d
 *.elf
 luckfox_gui
+board/executables/ffmpeg
 
 # Temp files
 *.swp

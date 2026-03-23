@@ -9,6 +9,10 @@ import stat
 import socket
 import subprocess
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
+
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
 from urllib.parse import urlparse
 from gui_client import GUIClient
 
@@ -18,11 +22,11 @@ try:
 except ImportError:
     HAS_AUDIO = False
 
-API_PORT           = 8080
-IFACE              = "eth0"
-RKIPC_SOCKET       = "/var/tmp/rkipc"
-RKIPC_SNAPSHOT_DIR = "/mnt/sdcard"
-RTSP_URL           = "rtsp://127.0.0.1/live/0"
+API_PORT   = 8080
+IFACE      = "eth0"
+RKIPC_SOCKET = "/var/tmp/rkipc"
+RTSP_URL   = "rtsp://127.0.0.1/live/0"
+FFMPEG     = "/mnt/sdcard/ffmpeg"
 
 gui = None
 
@@ -48,78 +52,26 @@ def rkipc_running():
         return False
 
 
-def latest_snapshot():
-    newest = None
-    newest_mtime = 0
-    try:
-        for root, dirs, files in os.walk(RKIPC_SNAPSHOT_DIR):
-            for fname in files:
-                if fname.endswith('.jpeg') or fname.endswith('.jpg'):
-                    fpath = os.path.join(root, fname)
-                    try:
-                        mt = os.path.getmtime(fpath)
-                        if mt > newest_mtime:
-                            newest_mtime = mt
-                            newest = fpath
-                    except Exception:
-                        pass
-    except Exception:
-        pass
-    return newest, newest_mtime
-
-
-def jpeg_complete(data):
-    if len(data) < 64 or data[:2] != b'\xff\xd8':
-        return False
-    return b'\xff\xd9' in data[-64:]
-
-
 def capture_frame():
     if not rkipc_running():
         return None, "rkipc not running"
-    fpath, mtime = latest_snapshot()
-    if not fpath:
-        return None, "No snapshots yet — rkipc may still be initializing"
-    deadline = time.time() + 2.0
-    while time.time() < deadline:
-        try:
-            with open(fpath, 'rb') as f:
+    try:
+        tmp = '/tmp/capture.jpg'
+        subprocess.run(
+            [FFMPEG, '-rtsp_transport', 'tcp', '-i', RTSP_URL,
+             '-vf', 'select=key',
+             '-frames:v', '1', '-f', 'image2', '-update', '1', tmp, '-y'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20
+        )
+        if os.path.exists(tmp):
+            with open(tmp, 'rb') as f:
                 data = f.read()
-            if jpeg_complete(data):
-                return data, None
-        except Exception as e:
-            return None, str(e)
-        time.sleep(0.05)
-        new_path, new_mtime = latest_snapshot()
-        if new_path and new_path != fpath:
-            fpath = new_path
-    return None, "Snapshot incomplete after 2s — rkipc still writing?"
+            os.remove(tmp)
+            return data, None
+        return None, "ffmpeg failed to produce a frame"
+    except Exception as e:
+        return None, str(e)
 
-
-SNAPSHOT_KEEP = 5
-
-
-def cleanup_snapshots():
-    while True:
-        try:
-            all_files = []
-            for root, dirs, files in os.walk(RKIPC_SNAPSHOT_DIR):
-                for fname in files:
-                    if fname.endswith('.jpeg') or fname.endswith('.jpg'):
-                        fpath = os.path.join(root, fname)
-                        try:
-                            all_files.append((os.path.getmtime(fpath), fpath))
-                        except Exception:
-                            pass
-            all_files.sort(reverse=True)
-            for _, fpath in all_files[SNAPSHOT_KEEP:]:
-                try:
-                    os.remove(fpath)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        time.sleep(5)
 
 
 def on_button_event(msg):
@@ -172,49 +124,10 @@ class APIHandler(BaseHTTPRequestHandler):
                 self._json(500, {'error': err or 'Capture failed'})
 
         elif path == '/api/camera/status':
-            running = rkipc_running()
-            fpath, mtime = latest_snapshot()
-            frame_age = round(time.time() - mtime, 2) if fpath else None
             self._json(200, {
-                'rkipc_running': running,
+                'rkipc_running': rkipc_running(),
                 'rtsp_url': RTSP_URL,
-                'latest_snapshot': fpath,
-                'snapshot_age_sec': frame_age,
-                'snapshot_dir': RKIPC_SNAPSHOT_DIR
             })
-
-        elif path == '/api/stream':
-            if not rkipc_running():
-                self._json(503, {'error': 'rkipc not running'})
-                return
-            try:
-                self.send_response(200)
-                self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=--luckfoxframe')
-                self.send_header('Cache-Control', 'no-cache')
-                self.end_headers()
-
-                last_path = None
-                while True:
-                    fpath, mtime = latest_snapshot()
-                    if fpath and fpath != last_path:
-                        try:
-                            with open(fpath, 'rb') as f:
-                                data = f.read()
-                            if data:
-                                frame = (
-                                    b'--luckfoxframe\r\n'
-                                    b'Content-Type: image/jpeg\r\n'
-                                    b'Content-Length: ' + str(len(data)).encode() + b'\r\n\r\n'
-                                    + data + b'\r\n'
-                                )
-                                self.wfile.write(frame)
-                                self.wfile.flush()
-                                last_path = fpath
-                        except Exception:
-                            break
-                    time.sleep(0.1)
-            except (BrokenPipeError, ConnectionResetError):
-                pass
 
         elif path == '/api/audio/stop':
             if not HAS_AUDIO:
@@ -296,7 +209,6 @@ def main():
     print(f"Audio support: {HAS_AUDIO}")
 
     gui = GUIClient(event_callback=on_button_event)
-    threading.Thread(target=cleanup_snapshots, daemon=True).start()
 
     def signal_handler(sig, frame):
         print("\nShutting down...")
@@ -306,7 +218,7 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    server = HTTPServer(('0.0.0.0', API_PORT), APIHandler)
+    server = ThreadingHTTPServer(('0.0.0.0', API_PORT), APIHandler)
     print(f"HTTP API listening on port {API_PORT}")
 
     try:

@@ -2,7 +2,14 @@
   "permissions": {
     "allow": [
       "WebFetch(domain:api.github.com)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(ssh -p 8022 root@luckfoxpico1.aiserver.onmobilespace.com \"grep -A 20 ''\\\\[video.jpeg\\\\]'' /oem/usr/share/rkipc-300w.ini\")",
+      "Bash(ssh -p 8022 root@luckfoxpico1.aiserver.onmobilespace.com \"grep -A 5 ''\\\\[video.0\\\\]'' /oem/usr/share/rkipc-300w.ini\")",
+      "Bash(ssh -p 8022 root@luckfoxpico1.aiserver.onmobilespace.com \"grep -E ''width|height|fps|frame_rate|bitrate'' /oem/usr/share/rkipc-300w.ini | head -30\")",
+      "Bash(ssh -p 8022 root@luckfoxpico1.aiserver.onmobilespace.com \"sed -i ''s/enable_cycle_snapshot = 1/enable_cycle_snapshot = 0/'' /oem/usr/share/rkipc-300w.ini && grep ''enable_cycle_snapshot'' /oem/usr/share/rkipc-300w.ini\")",
+      "Bash(ssh -p 8022 root@luckfoxpico1.aiserver.onmobilespace.com \"reboot\")",
+      "Bash(ssh -p 8022 root@luckfoxpico1.aiserver.onmobilespace.com \"ps aux | grep rkipc | grep -v grep\")",
+      "Bash(ssh -p 8022 root@luckfoxpico1.aiserver.onmobilespace.com \"grep ''enable_cycle_snapshot'' /userdata/rkipc.ini\")"
     ]
   }
 }

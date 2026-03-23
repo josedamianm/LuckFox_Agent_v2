@@ -17,3 +17,10 @@ type = "tcp"
 localIP = "127.0.0.1"
 localPort = 22
 remotePort = 8022
+
+[[proxies]]                                                                                                                                                                          
+name = "luckfox_rtsp"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 554
+remotePort = 8554

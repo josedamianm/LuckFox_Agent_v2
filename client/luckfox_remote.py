@@ -42,6 +42,34 @@ def api_get_binary(base, path, timeout=30):
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
+
+def capture_from_stream(base, timeout=10):
+    """Connect to /api/stream, extract first complete JPEG frame, return bytes."""
+    url = f"{base}/api/stream"
+    try:
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            buf = b''
+            while True:
+                chunk = resp.read(4096)
+                if not chunk:
+                    break
+                buf += chunk
+                start = buf.find(b'\xff\xd8')
+                if start != -1:
+                    end = buf.find(b'\xff\xd9', start)
+                    if end != -1:
+                        return buf[start:end + 2], None
+    except urllib.error.HTTPError as e:
+        body = e.read()
+        try:
+            err = json.loads(body)
+        except Exception:
+            err = {'error': f'HTTP {e.code}', 'body': body.decode(errors='replace')}
+        return None, err
+    except Exception as e:
+        return None, {'error': str(e)}
+
 def api_post(base, path, data=None, raw=None, content_type='application/json', timeout=30):
     url = f"{base}{path}"
     if raw is not None:
@@ -71,7 +99,7 @@ available commands & API endpoints:
   status                GET  /api/status              device info (ip, audio, agent_state)
   state                 GET  /api/agent/state          current agent state
   set <state>           POST /api/agent/state          set agent state
-  capture               GET  /api/capture              capture JPEG from rkipc snapshot
+  capture                    /api/stream               grab one JPEG frame from MJPEG stream
   camera-status         GET  /api/camera/status        rkipc health + latest snapshot age
   stream                     /api/stream               print MJPEG stream URL (open in browser/VLC)
   audio <file>          POST /api/audio/play           upload and play a WAV file on the board
@@ -79,12 +107,11 @@ available commands & API endpoints:
   audio-stop            GET  /api/audio/stop           stop audio playback
 
 camera:
-  The board runs rkipc (Rockchip IPC daemon) which writes periodic JPEG snapshots to
-  /mnt/sdcard every ~200ms. /api/capture reads the newest complete snapshot (<100ms).
-  /api/stream serves an MJPEG multipart stream by polling for new snapshot files.
-  Open the stream in a browser or VLC:  vlc <stream-url>
-  Config persists in /oem/usr/share/rkipc-300w.ini on the board (NOT /userdata/rkipc.ini
-  which is overwritten on every boot).
+  The board runs rkipc (Rockchip IPC daemon) providing an RTSP stream at 25fps.
+  'capture' grabs a keyframe via ffmpeg (takes ~10s — waits for IDR frame).
+  'stream' prints both the RTSP URL (25fps, VLC/ffplay) and the MJPEG HTTP URL (browser,
+  slow due to software H.265 decode on the board).
+  RTSP requires a native player — browsers do not support rtsp:// natively.
 
 agent states:
   idle       — waiting for input
@@ -128,7 +155,7 @@ examples:
     p_set.add_argument("state", choices=["idle", "listening", "thinking", "speaking", "error"])
     p_set.add_argument("--text", default=None, help="Text for speaking/error states")
 
-    p_cap = sub.add_parser("capture", help="GET /api/capture — capture JPEG frame from camera")
+    p_cap = sub.add_parser("capture", help="/api/stream — grab one JPEG frame from the MJPEG stream")
     p_cap.add_argument("-o", "--output", default="capture.jpg",
                        help="Output file path (default: capture.jpg)")
 
@@ -169,8 +196,8 @@ examples:
         print(json.dumps(result, indent=2))
 
     elif args.command == "capture":
-        print("Capturing frame from camera...", file=sys.stderr)
-        data, content_type, err = api_get_binary(base, "/api/capture", timeout=10)
+        print("Capturing frame...", file=sys.stderr)
+        data, content_type, err = api_get_binary(base, "/api/capture", timeout=30)
         if data:
             with open(args.output, "wb") as f:
                 f.write(data)
@@ -184,9 +211,10 @@ examples:
         print(json.dumps(result, indent=2))
 
     elif args.command == "stream":
-        stream_url = f"{base}/api/stream"
-        print(f"MJPEG stream URL: {stream_url}")
-        print(f"Open in browser or VLC: vlc {stream_url}")
+        rtsp_url = "rtsp://luckfoxpico1.aiserver.onmobilespace.com:8554/live/0"
+        print(f"RTSP stream (25fps, VLC/ffplay/mpv):")
+        print(f"  vlc {rtsp_url}")
+        print(f"  ffplay -rtsp_transport tcp {rtsp_url}")
 
     elif args.command == "audio":
         print(f"Uploading {args.file}...", file=sys.stderr)

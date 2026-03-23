@@ -33,7 +33,7 @@ luckfox_gui (C) → IPC event → Python HTTP server
 
 ---
 
-## 2. Current Status (2026-03-18)
+## 2. Current Status (2026-03-20)
 
 **Display + all 9 buttons confirmed working on hardware.**
 
@@ -48,16 +48,24 @@ luckfox_gui (C) → IPC event → Python HTTP server
 - LEFT/RIGHT buttons navigate between pages
 - Clock uses `time()`/`localtime()`/`strftime()` — pure C stdlib, no shell required
 
-**Camera confirmed working (2026-03-18):**
-- rkipc cycle snapshots writing to `/mnt/sdcard` every 200ms (~5 FPS)
-- `/api/capture` returns complete JPEG frames (<100ms response)
-- `/api/stream` MJPEG stream working at ~5 FPS in browser/VLC
-- Cleanup daemon keeps only 5 snapshots on SD card at all times
-- All client commands verified: status, state, set, capture, camera-status, stream, tone, audio, audio-stop
+**Camera reworked (2026-03-20):**
+- rkipc cycle snapshots **DISABLED** (`enable_cycle_snapshot = 0` in `/oem/usr/share/rkipc-300w.ini`)
+- RTSP stream at native **25 FPS**, H.265/HEVC, 2304×1296, with PCM A-law 8kHz audio
+- RTSP exposed externally via FRP: `rtsp://luckfoxpico1.aiserver.onmobilespace.com:8554/live/0`
+- `/api/capture` uses ffmpeg `select=key` filter → proper IDR keyframe JPEG (~10s response)
+- `/api/stream` removed — use RTSP directly in VLC/ffplay
+- Static ffmpeg 7.0.2 armhf at `/mnt/sdcard/ffmpeg` (32MB, gitignored, in sync.sh)
+- SD card remounted with `fmask=0022` (exec enabled) via udev rule change
+
+**No onboard microphone:**
+- RTSP stream shows PCM A-law 8kHz audio track — this is rkipc's default config, not a real mic
+- RV1106 SoC has an audio ADC, but LuckFox Pico Max has **no physical mic wired to it** (pins unpopulated)
+- Audio track in RTSP is silent/noise — useless for STT
+- For the AI voice pipeline, audio input must come from an **external source** (e.g. USB mic, I2S mic module)
 
 **Pending — next actions:**
 
-1. **Audio recording on board** — when CTRL is pressed (LISTENING state), start recording audio from the microphone; stop when CTRL is released (THINKING state)
+1. **Audio input hardware** — LuckFox Pico Max has NO onboard mic (RV1106 audio ADC pins unpopulated). An external mic is required (USB mic or I2S module). Must be resolved before audio recording is possible.
 2. **MacBook AI pipeline** — receive recorded audio from board, run STT (speech-to-text), send transcript to LLM, get response, run TTS (text-to-speech), send WAV back to board
 3. **Board playback** — receive TTS WAV via `/api/audio/play`, play through ESP32-C3, set SPEAKING state with response text, return to IDLE when playback completes
 4. **Error handling** — on any pipeline failure (network timeout, STT error, LLM error), set ERROR state with message, then return to IDLE after a few seconds
@@ -195,7 +203,7 @@ Animation approach (no LVGL anim timers, driven by `agent_tick()`):
 | File | Role |
 |------|------|
 | `board/sdcard/gui_client.py` | IPC client class — connects to `/tmp/luckfox_gui.sock`, auto-reconnects, sends JSON, reads button events in background thread |
-| `board/sdcard/http_api_server_v2.py` | HTTP API on port 8080 — agent state, camera capture/stream, audio playback via ESP32-C3 |
+| `board/sdcard/http_api_server_v2.py` | HTTP API on port 8080 — agent state, camera capture/stream, audio playback via ESP32-C3; uses `ThreadingHTTPServer` (per-request thread) so MJPEG stream and other API calls run concurrently |
 | `board/root/main.py` | Boot launcher — starts `luckfox_gui` binary, waits 1.5s, then starts Python server |
 | `board/sdcard/audio_sender.py` | UART packet protocol to ESP32-C3 |
 | `client/luckfox_remote.py` | MacBook CLI client for testing all API endpoints |
@@ -239,7 +247,15 @@ Animation approach (no LVGL anim timers, driven by `agent_tick()`):
 - Only CTRL button events are emitted over IPC (others reserved for future use)
 - Hardware pull-ups configured via IOC registers (`board/init.d/S99button_pullups`)
 
-### Audio — ESP32-C3 via UART2
+### Audio input — No onboard microphone
+
+| Item | Value |
+|------|-------|
+| RV1106 SoC | Has audio ADC, but mic pins are **unpopulated** on LuckFox Pico Max |
+| RTSP audio track | PCM A-law 8kHz — rkipc default config, silent/noise, not usable |
+| STT pipeline | Requires external mic (USB mic or I2S mic module wired to board) |
+
+### Audio output — ESP32-C3 via UART2
 
 | Item | Value |
 |------|-------|
@@ -412,10 +428,12 @@ ssh root@192.168.1.60 "killall luckfox_gui; /root/Executables/luckfox_gui"
 |------|------|
 | C binary | `/root/Executables/luckfox_gui` |
 | Python scripts | `/mnt/sdcard/` |
+| ffmpeg binary | `/mnt/sdcard/ffmpeg` (32MB, static armhf) |
 | IPC socket | `/tmp/luckfox_gui.sock` |
 | Autostart | `/etc/init.d/S99luckfox_agent` |
 | Emoji PNGs | `/mnt/sdcard/emoji/<name>.png` |
 | HTTP API port | `8080` |
+| RTSP stream | `rtsp://luckfoxpico1.aiserver.onmobilespace.com:8554/live/0` |
 
 ### Boot Sequence
 
@@ -454,10 +472,10 @@ The camera is managed entirely by the **rkipc** service (Rockchip IPC daemon). D
 
 - Started automatically at boot via `RkLunch.sh` → `post_chk()` → `rkipc -a /oem/usr/share/iqfiles`
 - Reads config from `/userdata/rkipc.ini` (copied from `/oem/usr/share/rkipc-300w.ini` on every boot)
-- Provides RTSP stream at `rtsp://<device-ip>/live/0` and `rtsp://<device-ip>/live/1`
-- With `enable_cycle_snapshot = 1`: saves JPEG files to `/mnt/sdcard/` every `snapshot_interval_ms` ms
-- JPEG filename format: `YYYYMMDDHHMMSS.jpeg` in subdirectories under `mount_path`
-- IPC socket: `/var/tmp/rkipc` (Unix domain socket, `srw-rw-rw-`)
+- Provides RTSP stream at `rtsp://<device-ip>/live/0` (main, 2304×1296) and `/live/1` (sub, 704×576)
+- Both streams: H.265/HEVC, 25 FPS, with PCM A-law 8kHz mono audio
+- Cycle snapshots **disabled** — RTSP is the only output
+- IPC socket: `/var/tmp/rkipc` (Unix domain socket) — binary protocol, not JSON
 
 ### Key config (persisted in `/oem/usr/share/rkipc-300w.ini`)
 
@@ -469,35 +487,55 @@ enable_jpeg = 1
 enable_rtsp = 1
 
 [video.jpeg]
-width = 1920
-height = 1080
-enable_cycle_snapshot = 1
-snapshot_interval_ms = 200      ; ~5 FPS — tune for speed vs CPU load
+enable_cycle_snapshot = 0       ; DISABLED — RTSP provides full 25 FPS
 
 [storage]
 mount_path = /mnt/sdcard        ; NOT /userdata (only 2.2MB, always full)
-free_size_del_min = 50          ; MB — start deleting old files below this
-free_size_del_max = 200         ; MB — stop deleting above this
 ```
 
 ### Python API (`http_api_server_v2.py`)
 
 | Constant / Function | Behaviour |
 |---|---|
-| `RKIPC_SNAPSHOT_DIR = "/mnt/sdcard"` | Root dir walked for snapshot files |
-| `SNAPSHOT_KEEP = 5` | Max snapshots kept by cleanup daemon |
+| `RTSP_URL = "rtsp://127.0.0.1/live/0"` | Local RTSP stream from rkipc |
+| `FFMPEG = "/mnt/sdcard/ffmpeg"` | Static armhf ffmpeg binary |
 | `rkipc_running()` | Returns `True` if `/var/tmp/rkipc` exists as a socket |
-| `latest_snapshot()` | Walks `RKIPC_SNAPSHOT_DIR` tree, returns path + mtime of newest `.jpeg` |
-| `jpeg_complete(data)` | Checks `FFD8` header and `FFD9` in last 64 bytes (avoids partial reads) |
-| `capture_frame()` | Retries up to 2s for a complete JPEG; follows newer files if they appear |
-| `cleanup_snapshots()` | Background thread (every 5s): keeps newest 5 snapshots, deletes the rest |
-| `GET /api/capture` | Returns latest complete JPEG as `image/jpeg` |
-| `GET /api/camera/status` | Returns `rkipc_running`, `rtsp_url`, `latest_snapshot`, `snapshot_age_sec` |
-| `GET /api/stream` | MJPEG multipart stream — polls snapshot dir, serves each new file as a frame |
+| `capture_frame()` | Runs ffmpeg `select=key` → temp file → reads and returns JPEG bytes |
+| `GET /api/capture` | Returns keyframe JPEG (~10s, software H.265 decode) |
+| `GET /api/camera/status` | Returns `rkipc_running`, `rtsp_url` |
 
-### Disk management
+### Static ffmpeg binary
 
-At 200ms interval, rkipc writes ~5 JPEGs/sec (~130KB each). The `cleanup_snapshots()` daemon runs every 5s and keeps only the 5 newest files (~650KB total on SD card). The SD card (`/mnt/sdcard`, ~60GB) has plenty of headroom.
+- Location on board: `/mnt/sdcard/ffmpeg` (SD card, exec-enabled after fmask fix)
+- Local repo: `board/executables/ffmpeg` (gitignored, tracked in `sync.sh` FILE_MAP)
+- Version: 7.0.2 static armhf from johnvansickle.com (32MB)
+- **No Rockchip MPP hardware decode** — software H.265 only, slow on RV1106
+- Download on board: `python3 -c "import urllib.request; urllib.request.urlretrieve('https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-armhf-static.tar.xz', '/tmp/ffmpeg.tar.xz')"`
+
+### ffmpeg capture pattern (critical)
+
+```python
+# CORRECT — write to temp file, discard stdout/stderr
+subprocess.run(
+    [FFMPEG, '-rtsp_transport', 'tcp', '-i', RTSP_URL,
+     '-vf', 'select=key', '-frames:v', '1', '-f', 'image2', '-update', '1', '/tmp/capture.jpg', '-y'],
+    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20
+)
+# WRONG — capture_output=True causes pipe deadlock (ffmpeg floods stderr)
+# WRONG — pipe:1 with image2 format produces grey/corrupt frames
+```
+
+### SD card exec fix
+
+- `/lib/udev/rules.d/61-sd-cards-auto-mount.rules`: changed `fmask=133` → `fmask=022`
+- Allows executing binaries from `/mnt/sdcard/`
+- Persistent across reboots. Requires reboot to apply (exFAT ignores remount for fmask).
+
+### FRP — RTSP tunnel
+
+- `frpc.toml`: `name=luckfox_rtsp`, `localPort=554`, `remotePort=8554`
+- FRP server `docker-compose.yaml` must explicitly expose `"8554:8554"` (unlike HTTP ports proxied internally by Caddy)
+- Client must force TCP: `vlc` or `ffplay -rtsp_transport tcp rtsp://luckfoxpico1.aiserver.onmobilespace.com:8554/live/0`
 
 ### RTSP stream (VLC / external)
 
@@ -589,12 +627,17 @@ LuckFox_Agent_v2/
 | `git submodule` fails in container | Check internet: `curl -I https://github.com`; or clone LVGL on host and copy in |
 | `python3` not found on board | `opkg update && opkg install python3` |
 | `/api/capture` returns error "rkipc not running" | Check `ps aux | grep rkipc`; if missing, `RkLunch.sh` may have failed — reboot |
-| `/api/capture` returns "No snapshots yet" | rkipc just started — wait 10s for first snapshot; check `ls /mnt/sdcard/video0/` |
-| `/api/capture` returns "Snapshot incomplete after 2s" | rkipc is writing slowly — check SD card health; try rebooting |
-| Snapshots not appearing in `/mnt/sdcard/` | Check `free_size_del_min` in rkipc ini — if SD card has <50MB free, rkipc won't write |
-| SD card filling up fast with JPEGs | `cleanup_snapshots()` daemon not running — check Python server started correctly |
-| `/api/stream` updates very slowly | Check `snapshot_interval_ms` in `/oem/usr/share/rkipc-300w.ini` — should be 200 |
+| `/api/capture` takes >20s or times out | Software H.265 decode is slow — `select=key` needs ~10s; verify ffmpeg at `/mnt/sdcard/ffmpeg` |
 | rkipc config changes not persisting across reboot | Edit `/oem/usr/share/rkipc-300w.ini` — NOT `/userdata/rkipc.ini` (overwritten on boot) |
+| `pkill` not found on board | Use `kill $(ps \| grep <name> \| grep -v grep \| awk '{print $1}')` |
+| BusyBox `wget` rejects HTTPS URLs | Use Python: `python3 -c "import urllib.request; urllib.request.urlretrieve(url, path)"` |
+| `curl` not found on board | Same — use Python urllib |
+| ffmpeg capture returns grey/corrupt JPEG | Don't use `pipe:1` with `-f image2` — write to a temp file instead |
+| ffmpeg subprocess hangs/deadlocks in Python | Never use `capture_output=True` — use `stdout=DEVNULL, stderr=DEVNULL` |
+| ffmpeg capture times out at 10s | `select=key` takes ~7-10s on RV1106 software decode — use timeout=20 |
+| `/api/stream` returns 404 | Endpoint removed — use RTSP: `rtsp://luckfoxpico1.aiserver.onmobilespace.com:8554/live/0` |
+| New FRP proxy not reachable externally | Must add port to BOTH `frpc.toml` (board) AND FRP server `docker-compose.yaml` ports section |
+| Binary on SD card won't execute (Permission denied) | SD card was `fmask=133` — fixed to `fmask=022` in `/lib/udev/rules.d/61-sd-cards-auto-mount.rules`, needs reboot |
 
 ### Debug Commands
 
@@ -607,12 +650,13 @@ dmesg | tail -30
 ssh root@192.168.1.60 "killall luckfox_gui; /root/Executables/luckfox_gui"
 ls -la /tmp/luckfox_gui.sock
 
-# Camera
-ssh root@192.168.1.60 "ls -lht /mnt/sdcard/video0/ | head -10"
+# Camera / RTSP
+ffprobe -v quiet -print_format json -show_streams -rtsp_transport tcp rtsp://luckfoxpico1.aiserver.onmobilespace.com:8554/live/0
 ssh root@192.168.1.60 "df -h /mnt/sdcard"
-ssh root@192.168.1.60 "grep -E 'snapshot_interval|mount_path|free_size' /oem/usr/share/rkipc-300w.ini"
+ssh root@192.168.1.60 "grep 'enable_cycle_snapshot' /oem/usr/share/rkipc-300w.ini"
 
 # Client testing (from MacBook)
 python3 client/luckfox_remote.py camera-status
-python3 client/luckfox_remote.py capture -o /tmp/frame.jpg && open /tmp/frame.jpg
+python3 client/luckfox_remote.py capture -o /tmp/frame.jpg && open /tmp/frame.jpg  # ~10s
+python3 client/luckfox_remote.py stream  # prints RTSP URLs
 ```

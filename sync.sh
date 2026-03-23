@@ -28,6 +28,7 @@ FILE_MAP=(
     "board/sdcard/rtsp_capture.py:/mnt/sdcard/rtsp_capture.py"
     "board/sdcard/frpc.toml:/mnt/sdcard/frpc.toml"
     "board/sdcard/audio_sender.py:/mnt/sdcard/audio_sender.py"
+    "board/executables/ffmpeg:/mnt/sdcard/ffmpeg"
     "board/init.d/S20spi0overlay:/etc/init.d/S20spi0overlay"
     "board/init.d/S21uart2overlay:/etc/init.d/S21uart2overlay"
     "board/init.d/S50rtcinit:/etc/init.d/S50rtcinit"
