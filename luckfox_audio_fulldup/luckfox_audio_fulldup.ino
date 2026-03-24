@@ -179,35 +179,6 @@ void setup_i2s(uint16_t rate) {
     Serial.printf("[I2S] Full-duplex OK @ %d Hz (DMA 16x128)\n", rate);
 }
 
-// ── Calibrate DC offset once at boot ────
-void calibrate_mic_dc() {
-    Serial.println("[MIC] Calibrating DC offset...");
-    flush_i2s_rx();
-
-    int64_t sum = 0;
-    uint32_t count = 0;
-    uint32_t t_start = millis();
-
-    while (millis() - t_start < 200) {
-        int32_t tmp[128];
-        size_t got = 0;
-        i2s_read(I2S_NUM_0, tmp, sizeof(tmp), &got, 50 / portTICK_PERIOD_MS);
-        uint16_t n = got / 4;
-        for (uint16_t i = 0; i < n; i++) {
-            sum += tmp[i];
-            count++;
-        }
-    }
-
-    if (count > 0) {
-        mic_dc_offset = (int32_t)(sum / count);
-        Serial.printf("[MIC] DC offset: %ld (%lu samples)\n", mic_dc_offset, count);
-    } else {
-        mic_dc_offset = 0;
-        Serial.println("[MIC] DC calibration failed");
-    }
-}
-
 // ── Packet builder / sender ────
 void send_packet(uint8_t type, const uint8_t* payload, uint16_t len) {
     uint8_t header[5] = { SYNC_0, SYNC_1, type,
@@ -312,12 +283,12 @@ void process_byte(uint8_t b) {
 }
 
 // ── Mic capture & upstream send ────
-// Same >>16 shift as original v1 (correct for 16-bit PCM over UART)
-// Plus DC offset removal from test firmware's approach
 void capture_and_send_mic() {
     if (!mic_active || !i2s_running) return;
 
     static int32_t raw32[MIC_CHUNK / 4];
+    static int32_t dc_acc = 0;  // running DC estimate (scaled x256)
+
     size_t bytes_read = 0;
     esp_err_t err = i2s_read(I2S_NUM_0, raw32, MIC_CHUNK, &bytes_read, 0);
     if (err != ESP_OK || bytes_read == 0) return;
@@ -326,9 +297,10 @@ void capture_and_send_mic() {
     static int16_t pcm16[MIC_CHUNK / 4];
 
     for (uint16_t i = 0; i < samples; i++) {
-        // Remove DC offset in 32-bit domain, then extract top 16 bits
-        int32_t corrected = raw32[i] - mic_dc_offset;
-        pcm16[i] = (int16_t)(corrected >> 8);
+        int16_t s = (int16_t)(raw32[i] >> 8);
+        dc_acc += (int32_t)s - (dc_acc >> 8);
+        int16_t dc = (int16_t)(dc_acc >> 8);
+        pcm16[i] = s - dc;
     }
 
     send_packet(PKT_MIC_DATA, (uint8_t*)pcm16, samples * 2);
@@ -381,9 +353,6 @@ void setup() {
 
     // ── I2S (once at boot) ────
     setup_i2s(SAMPLE_RATE);
-
-    // ── DC calibration (once at boot, while idle) ────
-    calibrate_mic_dc();
 
     Serial.printf("[MEM] Free heap: %lu bytes\n", (unsigned long)ESP.getFreeHeap());
     oled_show("READY", "Waiting...", "for LuckFox");
