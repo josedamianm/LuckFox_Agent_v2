@@ -32,6 +32,37 @@ FFMPEG     = "/mnt/sdcard/ffmpeg"
 gui = None
 mic_receiver = None
 
+# ── Mic reference counting ────
+# Multiple consumers (CTRL button, HTTP record, HTTP stream) can request
+# the mic simultaneously.  We only send PKT_AUDIO_START on 0→1 and
+# PKT_AUDIO_STOP on 1→0 so the ESP32 isn't reset mid-stream.
+_mic_users = 0
+_mic_lock = threading.Lock()
+
+
+def mic_acquire():
+    """Increment mic user count; sends AUDIO_START only on first user."""
+    global _mic_users
+    with _mic_lock:
+        _mic_users += 1
+        if _mic_users == 1:
+            print("[mic] AUDIO_START (first user)")
+            audio_sender.send_audio_start(16000, 16, 1)
+        else:
+            print(f"[mic] acquire (users={_mic_users}, already active)")
+
+
+def mic_release():
+    """Decrement mic user count; sends AUDIO_STOP only when last user leaves."""
+    global _mic_users
+    with _mic_lock:
+        _mic_users = max(0, _mic_users - 1)
+        if _mic_users == 0:
+            print("[mic] AUDIO_STOP (last user)")
+            audio_sender.send_audio_stop()
+        else:
+            print(f"[mic] release (users={_mic_users}, still active)")
+
 
 def get_ipv4(iface):
     try:
@@ -87,11 +118,11 @@ def on_button_event(msg):
             if mic_receiver:
                 mic_receiver.start_recording()
             if HAS_AUDIO:
-                audio_sender.send_audio_start(16000, 16, 1)
+                mic_acquire()
         elif state == "released":
             gui.set_state("thinking")
             if HAS_AUDIO:
-                audio_sender.send_audio_stop()
+                mic_release()
             if mic_receiver:
                 mic_receiver.stop_recording()
                 wav_bytes = mic_receiver.get_wav()
@@ -157,12 +188,7 @@ class APIHandler(BaseHTTPRequestHandler):
                 self._json(503, {'error': 'MicReceiver not available'})
             else:
                 mic_receiver.start_recording()
-                print("[mic] start_recording set, sending PKT_AUDIO_START")
-                try:
-                    audio_sender.send_audio_start(16000, 16, 1)
-                    print("[mic] PKT_AUDIO_START sent OK")
-                except Exception as e:
-                    print(f"[mic] send_audio_start FAILED: {e}")
+                mic_acquire()
                 gui.set_state('listening')
                 self._json(200, {'recording': True})
 
@@ -170,7 +196,7 @@ class APIHandler(BaseHTTPRequestHandler):
             if not HAS_AUDIO or not mic_receiver:
                 self._json(503, {'error': 'MicReceiver not available'})
             else:
-                audio_sender.send_audio_stop()
+                mic_release()
                 mic_receiver.stop_recording()
                 wav_bytes = mic_receiver.get_wav()
                 gui.set_state('thinking')
@@ -209,6 +235,37 @@ class APIHandler(BaseHTTPRequestHandler):
                     audio_sender.stream_test_tone(440, 2)
                 threading.Thread(target=_tone, daemon=True).start()
                 self._json(200, {'audio': 'tone', 'freq': 440, 'duration': 2})
+
+        elif path == '/api/audio/stream':
+            if not HAS_AUDIO or not mic_receiver:
+                self._json(503, {'error': 'Audio not available'})
+                return
+            # Start mic (refcounted) and create a per-client stream queue
+            mic_acquire()
+            stream_q = mic_receiver.add_stream()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/octet-stream')
+            self.send_header('X-Audio-Format', 's16le')
+            self.send_header('X-Audio-Rate', '16000')
+            self.send_header('X-Audio-Channels', '1')
+            self.end_headers()
+            print(f"[stream] client connected from {self.client_address[0]}")
+            try:
+                while True:
+                    try:
+                        chunk = stream_q.get(timeout=2.0)
+                    except Exception:
+                        # Queue.get timeout — send a keep-alive silence
+                        # (32 zero bytes = 16 silent samples = 1ms @ 16kHz)
+                        chunk = b'\x00' * 32
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+            finally:
+                mic_receiver.remove_stream(stream_q)
+                mic_release()
+                print(f"[stream] client disconnected from {self.client_address[0]}")
 
         else:
             self._json(404, {'error': 'Not found'})

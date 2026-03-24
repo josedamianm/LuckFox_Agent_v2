@@ -7,7 +7,7 @@ UART2: /dev/ttyS2
   GND = Pin 3 <-> ESP32-C3 GND
 """
 
-import struct, time, wave, os, threading, io
+import struct, time, wave, os, threading, io, queue
 
 UART_DEV     = "/dev/ttyS2"
 UART_BAUD    = 921600
@@ -136,6 +136,10 @@ class MicReceiver:
     """
     Background thread: reads PKT_MIC_DATA from ESP32-C3 over shared UART.
     Uses bulk reads + internal byte buffer for speed at 921600 baud.
+
+    Two consumption modes (can run simultaneously):
+      - Recording: accumulates PCM into _pcm_buf, retrieved via get_wav()
+      - Streaming: fan-out to per-client queues, consumed by HTTP stream handlers
     """
 
     SYNC_0 = 0xAA
@@ -148,8 +152,13 @@ class MicReceiver:
         self._lock = threading.Lock()
         self._sample_rate = 16000
         self._rx_buf = bytearray()          # internal read buffer
+        # Streaming: list of Queue objects, one per HTTP client
+        self._stream_queues = []
+        self._stream_lock = threading.Lock()
         self._thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._thread.start()
+
+    # ── Recording (CTRL button / record API) ────
 
     def start_recording(self):
         with self._lock:
@@ -170,6 +179,30 @@ class MicReceiver:
             wf.setframerate(self._sample_rate)
             wf.writeframes(pcm)
         return buf.getvalue()
+
+    # ── Streaming (HTTP /api/audio/stream) ────
+
+    def add_stream(self):
+        """Create a new stream queue. Returns the queue for the caller to read from."""
+        q = queue.Queue(maxsize=200)
+        with self._stream_lock:
+            self._stream_queues.append(q)
+        print(f"[mic_rx] stream added (total: {len(self._stream_queues)})")
+        return q
+
+    def remove_stream(self, q):
+        """Remove a stream queue when the HTTP client disconnects."""
+        with self._stream_lock:
+            if q in self._stream_queues:
+                self._stream_queues.remove(q)
+        print(f"[mic_rx] stream removed (total: {len(self._stream_queues)})")
+
+    def has_streams(self):
+        """True if any HTTP stream clients are connected."""
+        with self._stream_lock:
+            return len(self._stream_queues) > 0
+
+    # ── Serial I/O ────
 
     def _read_bytes(self, n):
         """Read exactly n bytes from serial, using internal buffer for efficiency."""
@@ -236,9 +269,17 @@ class MicReceiver:
                 print(f"[mic_rx] MIC_START rate={self._sample_rate}")
 
         elif ptype == PKT_MIC_DATA:
+            # Recording: accumulate in buffer
             with self._lock:
                 if self._recording:
                     self._pcm_buf.extend(data)
+            # Streaming: fan-out to all connected HTTP clients
+            with self._stream_lock:
+                for q in self._stream_queues:
+                    try:
+                        q.put_nowait(bytes(data))
+                    except queue.Full:
+                        pass  # drop if consumer is too slow
 
         elif ptype == PKT_MIC_STOP:
             print("[mic_rx] MIC_STOP received")

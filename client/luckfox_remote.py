@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
+import shutil
+import signal
+import subprocess
 import sys
 import urllib.request
 import urllib.error
@@ -99,23 +103,27 @@ available commands & API endpoints:
   status                GET  /api/status              device info (ip, audio, agent_state)
   state                 GET  /api/agent/state          current agent state
   set <state>           POST /api/agent/state          set agent state
-  capture                    /api/stream               grab one JPEG frame from MJPEG stream
-  camera-status         GET  /api/camera/status        rkipc health + latest snapshot age
-  stream                     /api/stream               print MJPEG stream URL (open in browser/VLC)
+  capture               GET  /api/capture              grab one JPEG keyframe (~10s)
+  camera-status         GET  /api/camera/status        rkipc health + RTSP URL
+  stream                                               open live video+audio (RTSP + HTTP mic)
   audio <file>          POST /api/audio/play           upload and play a WAV file on the board
   tone                  POST /api/audio/tone           play a sine-wave test tone
   audio-stop            GET  /api/audio/stop           stop audio playback
   record-status         GET  /api/audio/record_status  mic recording state + bytes captured
-  record-start          GET  /api/audio/record/start    start mic recording (simulates CTRL press)
-  record-stop           GET  /api/audio/record/stop     stop mic recording + report WAV size
+  record-start          GET  /api/audio/record/start   start mic recording (simulates CTRL press)
+  record-stop           GET  /api/audio/record/stop    stop mic recording + report WAV size
   record-download       GET  /api/audio/record/download download last recording as WAV file
 
-camera:
-  The board runs rkipc (Rockchip IPC daemon) providing an RTSP stream at 25fps.
-  'capture' grabs a keyframe via ffmpeg (takes ~10s — waits for IDR frame).
-  'stream' prints both the RTSP URL (25fps, VLC/ffplay) and the MJPEG HTTP URL (browser,
-  slow due to software H.265 decode on the board).
-  RTSP requires a native player — browsers do not support rtsp:// natively.
+stream command:
+  Opens live video (RTSP from rkipc) + live mic audio (HTTP from ESP32-C3).
+  Requires ffplay (from ffmpeg) installed on the client machine.
+  Video passes through untouched; audio is raw PCM s16le 16kHz mono.
+  The MacBook does all the heavy lifting — board just serves raw bytes.
+
+  %(prog)s stream                        live video + audio (default)
+  %(prog)s stream --audio-only           mic audio only (no video)
+  %(prog)s stream --video-only           RTSP video only (no mic)
+  %(prog)s stream --record out.mp4       record video+audio to file (Ctrl-C to stop)
 
 agent states:
   idle       — waiting for input
@@ -126,22 +134,17 @@ agent states:
 
 examples:
   %(prog)s status
-  %(prog)s state
   %(prog)s set idle
   %(prog)s set speaking --text "Hello!"
-  %(prog)s set error --text "Something went wrong"
-  %(prog)s camera-status
   %(prog)s capture -o frame.jpg
   %(prog)s stream
+  %(prog)s stream --record clip.mp4
   %(prog)s tone --freq 880 --duration 2
   %(prog)s audio response.wav
-  %(prog)s audio-stop
-  %(prog)s record-start
-  %(prog)s record-status
-  %(prog)s record-stop
+  %(prog)s record-start && sleep 5 && %(prog)s record-stop
+  %(prog)s record-download -o mic.wav
 
   %(prog)s --host 192.168.1.60 status
-  %(prog)s --host 192.168.1.60 capture -o frame.jpg
   %(prog)s --host 192.168.1.60 stream
 """
     parser = argparse.ArgumentParser(
@@ -167,7 +170,16 @@ examples:
                        help="Output file path (default: capture.jpg)")
 
     sub.add_parser("camera-status", help="GET /api/camera/status — camera daemon health + frame age")
-    sub.add_parser("stream", help="/api/stream — print MJPEG stream URL (open in browser/VLC)")
+
+    p_stream = sub.add_parser("stream", help="Open live video+audio stream (RTSP video + HTTP mic audio)")
+    p_stream.add_argument("--record", metavar="FILE", default=None,
+                          help="Record to file instead of playing (e.g. --record output.mp4)")
+    p_stream.add_argument("--audio-only", action="store_true",
+                          help="Stream audio only (no video)")
+    p_stream.add_argument("--video-only", action="store_true",
+                          help="Stream video only (no mic audio, same as RTSP)")
+    p_stream.add_argument("--rtsp", default=None,
+                          help="Override RTSP URL")
 
     p_audio = sub.add_parser("audio", help="POST /api/audio/play — upload and play a WAV file")
     p_audio.add_argument("file", help="WAV file path")
@@ -224,10 +236,91 @@ examples:
         print(json.dumps(result, indent=2))
 
     elif args.command == "stream":
-        rtsp_url = "rtsp://luckfoxpico1.aiserver.onmobilespace.com:8554/live/0"
-        print(f"RTSP stream (25fps, VLC/ffplay/mpv):")
-        print(f"  vlc {rtsp_url}")
-        print(f"  ffplay -rtsp_transport tcp {rtsp_url}")
+        # Resolve RTSP and audio stream URLs
+        rtsp_url = args.rtsp or "rtsp://luckfoxpico1.aiserver.onmobilespace.com:8554/live/0"
+        audio_url = f"{base}/api/audio/stream"
+
+        # Check for ffplay / ffmpeg
+        ffplay = shutil.which("ffplay")
+        ffmpeg = shutil.which("ffmpeg")
+
+        if args.video_only:
+            # Simple RTSP-only playback
+            if not ffplay:
+                print("ffplay not found. Install ffmpeg or open in VLC:")
+                print(f"  vlc {rtsp_url}")
+                sys.exit(1)
+            print(f"Opening video-only stream...")
+            print(f"  RTSP: {rtsp_url}")
+            print("Press 'q' in the ffplay window to quit.")
+            try:
+                subprocess.run([ffplay, "-rtsp_transport", "tcp", rtsp_url])
+            except KeyboardInterrupt:
+                pass
+
+        elif args.audio_only:
+            # Audio-only from HTTP mic stream
+            if not ffplay:
+                print("ffplay not found. Install ffmpeg, or use curl:")
+                print(f"  curl -N {audio_url} | ffplay -f s16le -ar 16000 -ac 1 -nodisp -")
+                sys.exit(1)
+            print(f"Opening audio-only stream (mic)...")
+            print(f"  Audio: {audio_url}")
+            print("Press 'q' or Ctrl-C to quit.")
+            try:
+                subprocess.run([
+                    ffplay, "-nodisp", "-f", "s16le", "-ar", "16000", "-ac", "1",
+                    audio_url
+                ])
+            except KeyboardInterrupt:
+                pass
+
+        elif args.record:
+            # Record video+audio to file using ffmpeg
+            if not ffmpeg:
+                print("ffmpeg not found. Install ffmpeg first.", file=sys.stderr)
+                sys.exit(1)
+            outfile = args.record
+            print(f"Recording to {outfile}...")
+            print(f"  Video: {rtsp_url}")
+            print(f"  Audio: {audio_url}")
+            print("Press Ctrl-C to stop recording.")
+            cmd = [
+                ffmpeg,
+                "-rtsp_transport", "tcp", "-i", rtsp_url,
+                "-f", "s16le", "-ar", "16000", "-ac", "1", "-i", audio_url,
+                "-map", "0:v", "-map", "1:a",
+                "-c:v", "copy", "-c:a", "aac", "-b:a", "64k",
+                outfile, "-y"
+            ]
+            try:
+                subprocess.run(cmd)
+            except KeyboardInterrupt:
+                pass
+            if os.path.exists(outfile):
+                size = os.path.getsize(outfile)
+                print(f"\nSaved {size} bytes to {outfile}")
+
+        else:
+            # Default: live video + audio playback
+            if not ffplay:
+                print("ffplay not found. Install ffmpeg, or run manually:")
+                print(f"  ffplay -rtsp_transport tcp -i {rtsp_url} \\")
+                print(f"    -f s16le -ar 16000 -ac 1 -i {audio_url}")
+                sys.exit(1)
+            print(f"Opening live stream (video + mic audio)...")
+            print(f"  Video: {rtsp_url}")
+            print(f"  Audio: {audio_url}")
+            print("Press 'q' in the ffplay window to quit.")
+            try:
+                subprocess.run([
+                    ffplay,
+                    "-rtsp_transport", "tcp", "-i", rtsp_url,
+                    "-f", "s16le", "-ar", "16000", "-ac", "1", "-i", audio_url,
+                    "-map", "0:v", "-map", "1:a"
+                ])
+            except KeyboardInterrupt:
+                pass
 
     elif args.command == "audio":
         print(f"Uploading {args.file}...", file=sys.stderr)
