@@ -287,7 +287,7 @@ void capture_and_send_mic() {
     if (!mic_active || !i2s_running) return;
 
     static int32_t raw32[MIC_CHUNK / 4];
-    static int32_t dc_acc = 0;  // running DC estimate (scaled x256)
+    static int32_t dc_acc = 0;
 
     size_t bytes_read = 0;
     esp_err_t err = i2s_read(I2S_NUM_0, raw32, MIC_CHUNK, &bytes_read, 0);
@@ -297,10 +297,17 @@ void capture_and_send_mic() {
     static int16_t pcm16[MIC_CHUNK / 4];
 
     for (uint16_t i = 0; i < samples; i++) {
-        int16_t s = (int16_t)(raw32[i] >> 8);
-        dc_acc += (int32_t)s - (dc_acc >> 8);
-        int16_t dc = (int16_t)(dc_acc >> 8);
-        pcm16[i] = s - dc;
+        int32_t s = raw32[i] >> 11;  // 24-bit → ~13-bit, good headroom
+
+        // DC removal high-pass filter
+        dc_acc += s - (dc_acc >> 8);
+        s -= (dc_acc >> 8);
+
+        // Clamp to int16 range (safety net, shouldn't hit normally)
+        if (s > 32767)  s = 32767;
+        if (s < -32768) s = -32768;
+
+        pcm16[i] = (int16_t)s;
     }
 
     send_packet(PKT_MIC_DATA, (uint8_t*)pcm16, samples * 2);
