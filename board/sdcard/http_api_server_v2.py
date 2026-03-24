@@ -251,15 +251,26 @@ class APIHandler(BaseHTTPRequestHandler):
             self.end_headers()
             print(f"[stream] client connected from {self.client_address[0]}")
             try:
+                # Batch small UART packets into larger writes to reduce
+                # HTTP overhead and improve playback continuity.
+                # Target: ~3200 bytes per write = 100ms of audio @ 16kHz mono 16-bit
+                BATCH_TARGET = 3200
+                batch = bytearray()
                 while True:
                     try:
-                        chunk = stream_q.get(timeout=2.0)
+                        chunk = stream_q.get(timeout=0.1)
+                        batch.extend(chunk)
                     except Exception:
-                        # Queue.get timeout — send a keep-alive silence
-                        # (32 zero bytes = 16 silent samples = 1ms @ 16kHz)
-                        chunk = b'\x00' * 32
-                    self.wfile.write(chunk)
-                    self.wfile.flush()
+                        pass  # timeout, check if we have a batch to send
+                    if len(batch) >= BATCH_TARGET:
+                        self.wfile.write(bytes(batch))
+                        self.wfile.flush()
+                        batch = bytearray()
+                    elif len(batch) > 0 and stream_q.empty():
+                        # Queue drained — flush what we have to avoid latency buildup
+                        self.wfile.write(bytes(batch))
+                        self.wfile.flush()
+                        batch = bytearray()
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
             finally:

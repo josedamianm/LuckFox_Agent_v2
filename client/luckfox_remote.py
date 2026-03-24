@@ -245,16 +245,20 @@ examples:
         ffmpeg = shutil.which("ffmpeg")
 
         if args.video_only:
-            # Simple RTSP-only playback
+            # Simple RTSP-only playback with VideoToolbox HW decode
             if not ffplay:
                 print("ffplay not found. Install ffmpeg or open in VLC:")
                 print(f"  vlc {rtsp_url}")
                 sys.exit(1)
             print(f"Opening video-only stream...")
-            print(f"  RTSP: {rtsp_url}")
+            print(f"  RTSP: {rtsp_url} (VideoToolbox HW decode)")
             print("Press 'q' in the ffplay window to quit.")
             try:
-                subprocess.run([ffplay, "-rtsp_transport", "tcp", rtsp_url])
+                subprocess.run([
+                    ffplay, "-rtsp_transport", "tcp",
+                    "-hwaccel", "videotoolbox",
+                    rtsp_url
+                ])
             except KeyboardInterrupt:
                 pass
 
@@ -262,14 +266,16 @@ examples:
             # Audio-only from HTTP mic stream
             if not ffplay:
                 print("ffplay not found. Install ffmpeg, or use curl:")
-                print(f"  curl -N {audio_url} | ffplay -f s16le -ar 16000 -ac 1 -nodisp -")
+                print(f"  curl -N {audio_url} | ffplay -f s16le -ar 16000 -ch_layout mono -nodisp -")
                 sys.exit(1)
             print(f"Opening audio-only stream (mic)...")
             print(f"  Audio: {audio_url}")
             print("Press 'q' or Ctrl-C to quit.")
             try:
                 subprocess.run([
-                    ffplay, "-nodisp", "-f", "s16le", "-ar", "16000", "-ac", "1",
+                    ffplay, "-nodisp",
+                    "-f", "s16le", "-ar", "16000", "-ch_layout", "mono",
+                    "-af", "volume=5",
                     audio_url
                 ])
             except KeyboardInterrupt:
@@ -287,8 +293,10 @@ examples:
             print("Press Ctrl-C to stop recording.")
             cmd = [
                 ffmpeg,
-                "-rtsp_transport", "tcp", "-i", rtsp_url,
-                "-f", "s16le", "-ar", "16000", "-ac", "1", "-i", audio_url,
+                "-rtsp_transport", "tcp",
+                "-hwaccel", "videotoolbox",
+                "-i", rtsp_url,
+                "-f", "s16le", "-ar", "16000", "-ch_layout", "mono", "-i", audio_url,
                 "-map", "0:v", "-map", "1:a",
                 "-c:v", "copy", "-c:a", "aac", "-b:a", "64k",
                 outfile, "-y"
@@ -303,22 +311,41 @@ examples:
 
         else:
             # Default: live video + audio playback
-            if not ffplay:
-                print("ffplay not found. Install ffmpeg, or run manually:")
-                print(f"  ffplay -rtsp_transport tcp -i {rtsp_url} \\")
-                print(f"    -f s16le -ar 16000 -ac 1 -i {audio_url}")
+            # ffplay only supports a single input, so use ffmpeg to mux
+            # RTSP video + HTTP audio into a nut pipe, then ffplay reads it.
+            if not ffmpeg or not ffplay:
+                print("ffmpeg and ffplay required. Install ffmpeg, or run separately:")
+                print(f"  # Video only:")
+                print(f"  ffplay -rtsp_transport tcp -hwaccel videotoolbox {rtsp_url}")
+                print(f"  # Audio only:")
+                print(f"  ffplay -nodisp -f s16le -ar 16000 -ch_layout mono -af volume=5 {audio_url}")
                 sys.exit(1)
             print(f"Opening live stream (video + mic audio)...")
-            print(f"  Video: {rtsp_url}")
+            print(f"  Video: {rtsp_url} (VideoToolbox HW decode)")
             print(f"  Audio: {audio_url}")
             print("Press 'q' in the ffplay window to quit.")
             try:
-                subprocess.run([
+                # ffmpeg muxes RTSP video + HTTP mic audio into a pipe
+                mux = subprocess.Popen([
+                    ffmpeg,
+                    "-rtsp_transport", "tcp",
+                    "-hwaccel", "videotoolbox",
+                    "-i", rtsp_url,
+                    "-f", "s16le", "-ar", "16000", "-ch_layout", "mono", "-i", audio_url,
+                    "-map", "0:v", "-map", "1:a",
+                    "-c:v", "copy", "-c:a", "pcm_s16le",
+                    "-af", "volume=5",
+                    "-f", "nut", "-"
+                ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                # ffplay reads the muxed stream from stdin
+                play = subprocess.Popen([
                     ffplay,
-                    "-rtsp_transport", "tcp", "-i", rtsp_url,
-                    "-f", "s16le", "-ar", "16000", "-ac", "1", "-i", audio_url,
-                    "-map", "0:v", "-map", "1:a"
-                ])
+                    "-hwaccel", "videotoolbox",
+                    "-"
+                ], stdin=mux.stdout)
+                mux.stdout.close()  # allow SIGPIPE to propagate
+                play.wait()
+                mux.terminate()
             except KeyboardInterrupt:
                 pass
 
