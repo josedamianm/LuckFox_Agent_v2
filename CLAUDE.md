@@ -33,7 +33,7 @@ luckfox_gui (C) → IPC event → Python HTTP server
 
 ---
 
-## 2. Current Status (2026-03-20)
+## 2. Current Status (2026-03-24)
 
 **Display + all 9 buttons confirmed working on hardware.**
 
@@ -57,19 +57,26 @@ luckfox_gui (C) → IPC event → Python HTTP server
 - Static ffmpeg 7.0.2 armhf at `/mnt/sdcard/ffmpeg` (32MB, gitignored, in sync.sh)
 - SD card remounted with `fmask=0022` (exec enabled) via udev rule change
 
-**No onboard microphone:**
-- RTSP stream shows PCM A-law 8kHz audio track — this is rkipc's default config, not a real mic
-- RV1106 SoC has an audio ADC, but LuckFox Pico Max has **no physical mic wired to it** (pins unpopulated)
-- Audio track in RTSP is silent/noise — useless for STT
-- For the AI voice pipeline, audio input must come from an **external source** (e.g. USB mic, I2S mic module)
+**Audio input — INMP441 mic integrated (2026-03-24):**
+- INMP441 I2S MEMS microphone wired to ESP32-C3 GPIO10 (I2S DIN)
+- Full-duplex I2S: speaker (MAX98357A) and mic (INMP441) share BCLK (GPIO0) / LRC (GPIO1)
+- ESP32-C3 firmware: `luckfox_audio_fulldup.ino` — captures 32-bit I2S, converts to 16-bit PCM (`raw32[i] >> 8`), streams upstream via `PKT_MIC_DATA` over UART2
+- Python `MicReceiver` class in `audio_sender.py` — background thread reads mic packets, buffers PCM, exports WAV on demand
+- Mic lifecycle tied to `AUDIO_START`/`AUDIO_STOP` — mic starts/stops with speaker session
+- HTTP endpoints: `/api/audio/record/start`, `/api/audio/record/stop`, `/api/audio/record/download`, `/api/audio/stream`
+- Bandwidth: 512 kbps bidirectional audio (mic + speaker) within UART's 736 kbps capacity
+
+**Live stream client fixed (2026-03-24):**
+- `luckfox_remote.py stream` uses two separate ffplay processes (video RTSP + audio HTTP)
+- Previous pipe-mux approach (ffmpeg → NUT → ffplay) failed due to rkipc's ~15s GOP — P-frames flooded pipe before IDR keyframe
+- Direct RTSP → ffplay handles long GOP correctly (same as VLC)
 
 **Pending — next actions:**
 
-1. **Audio input hardware** — LuckFox Pico Max has NO onboard mic (RV1106 audio ADC pins unpopulated). An external mic is required (USB mic or I2S module). Must be resolved before audio recording is possible.
-2. **MacBook AI pipeline** — receive recorded audio from board, run STT (speech-to-text), send transcript to LLM, get response, run TTS (text-to-speech), send WAV back to board
-3. **Board playback** — receive TTS WAV via `/api/audio/play`, play through ESP32-C3, set SPEAKING state with response text, return to IDLE when playback completes
-4. **Error handling** — on any pipeline failure (network timeout, STT error, LLM error), set ERROR state with message, then return to IDLE after a few seconds
-5. **End-to-end test** — press CTRL, speak, release CTRL → board records → MacBook processes → board speaks response → IDLE
+1. **MacBook AI pipeline** — receive recorded audio from board, run STT (speech-to-text), send transcript to LLM, get response, run TTS (text-to-speech), send WAV back to board
+2. **Board playback** — receive TTS WAV via `/api/audio/play`, play through ESP32-C3, set SPEAKING state with response text, return to IDLE when playback completes
+3. **Error handling** — on any pipeline failure (network timeout, STT error, LLM error), set ERROR state with message, then return to IDLE after a few seconds
+4. **End-to-end test** — press CTRL, speak, release CTRL → board records → MacBook processes → board speaks response → IDLE
 
 ---
 
@@ -160,6 +167,8 @@ Newline-delimited JSON over Unix domain socket `/tmp/luckfox_gui.sock`. Transpor
 | `ipc/cmd_parser.h` | Public: `cmd_parse()` |
 | `screens/scr_agent.c` | All 5 agent states in one file — tick-driven animations |
 | `screens/scr_agent.h` | Public: `agent_screen_init()`, `agent_set_state()`, `agent_tick()` |
+| `faces/kawaii_face.c` | Animated emoji face — 9 emotions, auto-blink, expression transitions |
+| `faces/kawaii_face.h` | Public: `kawaii_init()`, `kawaii_tick()`, `kawaii_set_emotion()` |
 
 ### `main.c` Main Loop
 
@@ -205,8 +214,8 @@ Animation approach (no LVGL anim timers, driven by `agent_tick()`):
 | `board/sdcard/gui_client.py` | IPC client class — connects to `/tmp/luckfox_gui.sock`, auto-reconnects, sends JSON, reads button events in background thread |
 | `board/sdcard/http_api_server_v2.py` | HTTP API on port 8080 — agent state, camera capture/stream, audio playback via ESP32-C3; uses `ThreadingHTTPServer` (per-request thread) so MJPEG stream and other API calls run concurrently |
 | `board/root/main.py` | Boot launcher — starts `luckfox_gui` binary, waits 1.5s, then starts Python server |
-| `board/sdcard/audio_sender.py` | UART packet protocol to ESP32-C3 |
-| `client/luckfox_remote.py` | MacBook CLI client for testing all API endpoints |
+| `board/sdcard/audio_sender.py` | UART packet protocol to ESP32-C3 — includes `AudioSender` (playback) and `MicReceiver` (mic capture/streaming) |
+| `client/luckfox_remote.py` | MacBook CLI client for testing all API endpoints — `stream` command opens RTSP video + HTTP mic audio |
 
 ---
 
@@ -247,15 +256,7 @@ Animation approach (no LVGL anim timers, driven by `agent_tick()`):
 - Only CTRL button events are emitted over IPC (others reserved for future use)
 - Hardware pull-ups configured via IOC registers (`board/init.d/S99button_pullups`)
 
-### Audio input — No onboard microphone
-
-| Item | Value |
-|------|-------|
-| RV1106 SoC | Has audio ADC, but mic pins are **unpopulated** on LuckFox Pico Max |
-| RTSP audio track | PCM A-law 8kHz — rkipc default config, silent/noise, not usable |
-| STT pipeline | Requires external mic (USB mic or I2S mic module wired to board) |
-
-### Audio output — ESP32-C3 via UART2
+### Audio — ESP32-C3 Full-Duplex via UART2
 
 | Item | Value |
 |------|-------|
@@ -264,6 +265,13 @@ Animation approach (no LVGL anim timers, driven by `agent_tick()`):
 | Protocol | Binary: SYNC `0xAA55`, packet type, length, payload, XOR checksum |
 | LuckFox TX | GPIO42 (Pin1) → ESP32-C3 GPIO4 |
 | LuckFox RX | GPIO43 (Pin2) ← ESP32-C3 GPIO7 |
+| Audio input | INMP441 I2S mic → ESP32-C3 GPIO10 (DIN) → `PKT_MIC_DATA` → `/dev/ttyS2` |
+| Audio output | `/dev/ttyS2` → `PKT_AUDIO_DATA` → ESP32-C3 GPIO2 (DOUT) → MAX98357A speaker |
+| I2S shared bus | BCLK=GPIO0, LRC/WS=GPIO1 (both mic and speaker share clock) |
+| Mic format | 16kHz, 16-bit mono (INMP441 outputs 24-bit in 32-bit I2S slot, firmware converts via `raw32[i] >> 8`) |
+| Amp enable | GPIO3 (SD/EN pin on MAX98357A) — HIGH = enabled |
+| Firmware | `luckfox_audio_fulldup.ino` (full-duplex, replaces speaker-only `luckfox_audio_receiver.ino`) |
+| Note | RV1106 SoC has audio ADC but LuckFox Pico Max has **no onboard mic** — all audio goes through ESP32-C3 |
 
 ---
 
@@ -475,6 +483,8 @@ The camera is managed entirely by the **rkipc** service (Rockchip IPC daemon). D
 - Provides RTSP stream at `rtsp://<device-ip>/live/0` (main, 2304×1296) and `/live/1` (sub, 704×576)
 - Both streams: H.265/HEVC, 25 FPS, with PCM A-law 8kHz mono audio
 - Cycle snapshots **disabled** — RTSP is the only output
+- **GOP (keyframe interval) is ~15 seconds** — only 1 IDR frame per ~375 frames; clients joining mid-stream see HEVC RPS errors until next IDR
+- Direct RTSP clients (VLC, `ffplay -rtsp_transport tcp`) handle long GOP gracefully; pipe-mux approaches (ffmpeg → NUT pipe → ffplay) do not
 - IPC socket: `/var/tmp/rkipc` (Unix domain socket) — binary protocol, not JSON
 
 ### Key config (persisted in `/oem/usr/share/rkipc-300w.ini`)
@@ -540,13 +550,13 @@ subprocess.run(
 ### RTSP stream (VLC / external)
 
 ```
-rtsp://<device-ip>/live/0   ← main stream (1920×1080)
+rtsp://<device-ip>/live/0   ← main stream (2304×1296)
 rtsp://<device-ip>/live/1   ← sub stream
 ```
 
 ---
 
-## 14. V1 Reference (Legacy)
+## 13. V1 Reference (Legacy)
 
 Key V1 files still in the repo (deprecated):
 
@@ -600,14 +610,19 @@ LuckFox_Agent_v2/
 │   │   │   ├── ipc_server.h
 │   │   │   ├── cmd_parser.c        ← JSON command parser (currently only set_state)
 │   │   │   └── cmd_parser.h
-│   │   └── screens/
-│   │       ├── scr_agent.c          ← All 5 agent states, tick-driven animations
-│   │       └── scr_agent.h
+│   │   ├── screens/
+│   │   │   ├── scr_agent.c          ← All 5 agent states, tick-driven animations
+│   │   │   └── scr_agent.h
+│   │   └── faces/
+│   │       ├── kawaii_face.c        ← Animated emoji face (9 emotions, blink, bounce)
+│   │       └── kawaii_face.h
 │   └── lib/
 │       └── lvgl/                    ← LVGL v9.2 (git submodule)
 │
 ├── client/                          ← Desktop client tools
-└── luckfox_audio_receiver/          ← ESP32-C3 firmware
+│   └── luckfox_remote.py            ← MacBook CLI (status, capture, stream, audio, etc.)
+└── luckfox_audio_receiver/          ← ESP32-C3 firmware (full-duplex: speaker + INMP441 mic)
+    └── luckfox_audio_fulldup.ino    ← Active firmware (replaces luckfox_audio_receiver.ino)
 ```
 
 ---
@@ -638,6 +653,11 @@ LuckFox_Agent_v2/
 | `/api/stream` returns 404 | Endpoint removed — use RTSP: `rtsp://luckfoxpico1.aiserver.onmobilespace.com:8554/live/0` |
 | New FRP proxy not reachable externally | Must add port to BOTH `frpc.toml` (board) AND FRP server `docker-compose.yaml` ports section |
 | Binary on SD card won't execute (Permission denied) | SD card was `fmask=133` — fixed to `fmask=022` in `/lib/udev/rules.d/61-sd-cards-auto-mount.rules`, needs reboot |
+| `stream` command shows noise/dark image | rkipc uses ~15s GOP; pipe-mux fails before first IDR. Fixed: uses two separate ffplay processes (RTSP video + HTTP audio) |
+| `stream` video black with `stderr=subprocess.PIPE` | Never use `stderr=subprocess.PIPE` with ffmpeg without reading it — pipe buffer fills up (~64KB) and deadlocks. Use `stderr=subprocess.DEVNULL` |
+| Mic audio is silent / flat line | INMP441 L/R pin must be tied to GND (selects LEFT channel) |
+| Mic audio distorted / clipped | Verify 32→16 bit conversion uses `raw32[i] >> 8` not `>> 16` |
+| No `PKT_MIC_DATA` received from ESP32 | Check GPIO10 ↔ INMP441 SD wire; verify `luckfox_audio_fulldup.ino` is flashed (not old receiver-only firmware) |
 
 ### Debug Commands
 
@@ -652,6 +672,8 @@ ls -la /tmp/luckfox_gui.sock
 
 # Camera / RTSP
 ffprobe -v quiet -print_format json -show_streams -rtsp_transport tcp rtsp://luckfoxpico1.aiserver.onmobilespace.com:8554/live/0
+# Check rkipc keyframe interval (should show 1 key_frame=1 per ~15s)
+ffprobe -rtsp_transport tcp -select_streams v:0 -show_entries frame=key_frame,pts_time -read_intervals "%+15" rtsp://luckfoxpico1.aiserver.onmobilespace.com:8554/live/0 2>/dev/null | grep key_frame=1
 ssh root@192.168.1.60 "df -h /mnt/sdcard"
 ssh root@192.168.1.60 "grep 'enable_cycle_snapshot' /oem/usr/share/rkipc-300w.ini"
 

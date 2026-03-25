@@ -311,41 +311,43 @@ examples:
 
         else:
             # Default: live video + audio playback
-            # ffplay only supports a single input, so use ffmpeg to mux
-            # RTSP video + HTTP audio into a nut pipe, then ffplay reads it.
-            if not ffmpeg or not ffplay:
-                print("ffmpeg and ffplay required. Install ffmpeg, or run separately:")
-                print(f"  # Video only:")
-                print(f"  ffplay -rtsp_transport tcp -hwaccel videotoolbox {rtsp_url}")
-                print(f"  # Audio only:")
-                print(f"  ffplay -nodisp -f s16le -ar 16000 -ch_layout mono -af volume=5 {audio_url}")
+            # Open RTSP video and HTTP mic audio as two separate ffplay processes.
+            # The pipe-mux approach (ffmpeg → NUT → ffplay) fails because rkipc uses
+            # a very long GOP (~15s); ffmpeg copies P-frames before the first IDR into
+            # the pipe and ffplay's HEVC decoder shows noise until an IDR arrives.
+            # Two separate processes match how VLC handles the RTSP stream natively.
+            if not ffplay:
+                print("ffplay not found. Install ffmpeg, or open in VLC:")
+                print(f"  vlc {rtsp_url}")
                 sys.exit(1)
             print(f"Opening live stream (video + mic audio)...")
-            print(f"  Video: {rtsp_url} (VideoToolbox HW decode)")
+            print(f"  Video: {rtsp_url}")
             print(f"  Audio: {audio_url}")
-            print("Press 'q' in the ffplay window to quit.")
+            print("Press 'q' in the video window to quit.")
             try:
-                # ffmpeg muxes RTSP video + HTTP mic audio into a pipe
-                mux = subprocess.Popen([
-                    ffmpeg,
-                    "-rtsp_transport", "tcp",
-                    "-hwaccel", "videotoolbox",
-                    "-i", rtsp_url,
-                    "-f", "s16le", "-ar", "16000", "-ch_layout", "mono", "-i", audio_url,
-                    "-map", "0:v", "-map", "1:a",
-                    "-c:v", "copy", "-c:a", "pcm_s16le",
-                    "-af", "volume=5",
-                    "-f", "nut", "-"
-                ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                # ffplay reads the muxed stream from stdin
-                play = subprocess.Popen([
+                # Video: direct RTSP → ffplay with low-latency flags to reduce RTSP buffer delay.
+                # -fflags nobuffer / -flags low_delay: disable input buffering
+                # -framedrop: drop late frames instead of building up lag
+                # -probesize 32 / -analyzeduration 0: start decoding immediately
+                video = subprocess.Popen([
                     ffplay,
-                    "-hwaccel", "videotoolbox",
-                    "-"
-                ], stdin=mux.stdout)
-                mux.stdout.close()  # allow SIGPIPE to propagate
-                play.wait()
-                mux.terminate()
+                    "-rtsp_transport", "tcp",
+                    "-fflags", "nobuffer",
+                    "-flags", "low_delay",
+                    "-framedrop",
+                    "-probesize", "32",
+                    "-analyzeduration", "0",
+                    rtsp_url
+                ], stderr=subprocess.DEVNULL)
+                # Audio: HTTP mic stream → ffplay (no display)
+                audio = subprocess.Popen([
+                    ffplay, "-nodisp",
+                    "-f", "s16le", "-ar", "16000", "-ch_layout", "mono",
+                    "-af", "volume=5",
+                    audio_url
+                ], stderr=subprocess.DEVNULL)
+                video.wait()
+                audio.terminate()
             except KeyboardInterrupt:
                 pass
 
