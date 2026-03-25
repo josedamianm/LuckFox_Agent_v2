@@ -124,6 +124,7 @@ stream command:
   %(prog)s stream --audio-only           mic audio only (no video)
   %(prog)s stream --video-only           RTSP video only (no mic)
   %(prog)s stream --record out.mp4       record video+audio to file (Ctrl-C to stop)
+  %(prog)s stream --sync-delay 400       delay audio by 400ms to sync with video
 
 agent states:
   idle       — waiting for input
@@ -180,6 +181,8 @@ examples:
                           help="Stream video only (no mic audio, same as RTSP)")
     p_stream.add_argument("--rtsp", default=None,
                           help="Override RTSP URL")
+    p_stream.add_argument("--sync-delay", type=int, default=0, metavar="MS",
+                          help="Delay audio by MS milliseconds to sync with video (e.g. --sync-delay 400)")
 
     p_audio = sub.add_parser("audio", help="POST /api/audio/play — upload and play a WAV file")
     p_audio.add_argument("file", help="WAV file path")
@@ -340,10 +343,11 @@ examples:
                     rtsp_url
                 ], stderr=subprocess.DEVNULL)
                 # Audio: HTTP mic stream → ffplay (no display)
+                audio_af = f"adelay={args.sync_delay}|{args.sync_delay},volume=5" if args.sync_delay > 0 else "volume=5"
                 audio = subprocess.Popen([
                     ffplay, "-nodisp",
                     "-f", "s16le", "-ar", "16000", "-ch_layout", "mono",
-                    "-af", "volume=5",
+                    "-af", audio_af,
                     audio_url
                 ], stderr=subprocess.DEVNULL)
                 video.wait()
