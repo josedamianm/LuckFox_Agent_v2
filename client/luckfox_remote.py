@@ -420,9 +420,6 @@ call command:
     elif args.command == "call":
         _do_call(base, args)
 
-if __name__ == "__main__":
-    main()
-
 
 def _do_call(base, args):
     """Live bidirectional audio call implementation."""
@@ -455,8 +452,11 @@ def _do_call(base, args):
     # ffmpeg captures from avfoundation mic and writes raw s16le 8 kHz to stdout.
     mic_proc = subprocess.Popen(
         [ffmpeg,
+         '-fflags', 'nobuffer',
          '-f', 'avfoundation', '-i', f':{args.mic_device}',
-         '-ar', '8000', '-ac', '1', '-f', 's16le', 'pipe:1'],
+         '-ar', '8000', '-ac', '1',
+         '-fflags', '+nobuffer', '-flags', 'low_delay', '-flush_packets', '1',
+         '-f', 's16le', 'pipe:1'],
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
     )
@@ -493,6 +493,8 @@ def _do_call(base, args):
     vol_af   = f"volume={args.volume}"
     rx_proc  = subprocess.Popen(
         [ffplay, '-nodisp',
+         '-fflags', 'nobuffer', '-flags', 'low_delay',
+         '-probesize', '32', '-analyzeduration', '0',
          '-f', 's16le', '-ar', '8000', '-ch_layout', 'mono',
          '-af', vol_af,
          rx_url],
@@ -513,3 +515,7 @@ def _do_call(base, args):
         except Exception:
             pass
         print("Call ended.", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

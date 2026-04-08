@@ -199,8 +199,12 @@ class APIHandler(BaseHTTPRequestHandler):
         """
         te = self.headers.get('Transfer-Encoding', '').lower()
         cl = self.headers.get('Content-Length', None)
+        total_bytes = 0
+
+        print(f"[tx] Transfer-Encoding={te!r} Content-Length={cl!r}")
 
         if 'chunked' in te:
+            print("[tx] branch=chunked")
             while _call_active:
                 line = self.rfile.readline().strip()
                 if not line:
@@ -216,7 +220,11 @@ class APIHandler(BaseHTTPRequestHandler):
                 if chunk and _call_active:
                     audio_sender.uart_write(
                         audio_sender.build_packet(audio_sender.AUDIO_DATA, chunk))
+                    total_bytes += len(chunk)
+                    if total_bytes % 4096 == 0:
+                        print(f"[tx] forwarded {total_bytes} bytes")
         elif cl:
+            print(f"[tx] branch=content-length ({cl} bytes)")
             total    = int(cl)
             received = 0
             while received < total and _call_active:
@@ -227,13 +235,20 @@ class APIHandler(BaseHTTPRequestHandler):
                 received += len(chunk)
                 audio_sender.uart_write(
                     audio_sender.build_packet(audio_sender.AUDIO_DATA, chunk))
+                total_bytes += len(chunk)
         else:
+            print("[tx] branch=raw-stream")
             while _call_active:
-                chunk = self.rfile.read(256)
+                chunk = self.rfile.read1(256) if hasattr(self.rfile, 'read1') else self.rfile.read(256)
                 if not chunk:
                     break
                 audio_sender.uart_write(
                     audio_sender.build_packet(audio_sender.AUDIO_DATA, chunk))
+                total_bytes += len(chunk)
+                if total_bytes % 4096 == 0:
+                    print(f"[tx] forwarded {total_bytes} bytes")
+
+        print(f"[tx] done, total={total_bytes} bytes")
 
     def do_GET(self):
         path = urlparse(self.path).path.rstrip('/')
@@ -381,7 +396,7 @@ class APIHandler(BaseHTTPRequestHandler):
             self.end_headers()
             print(f"[call/rx] client connected from {self.client_address[0]}")
             try:
-                BATCH_TARGET = 1600   # ~100 ms @ 8 kHz
+                BATCH_TARGET = 512    # ~32 ms @ 8 kHz — keep latency low for live call
                 batch = bytearray()
                 while _call_active:
                     try:

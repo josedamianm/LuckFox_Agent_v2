@@ -74,9 +74,9 @@
 #define MIC_CHUNK_CALL    256
 // Ring-buffer sizes:
 //   RING_SIZE       = 16 384 B → 512 ms @ 16 kHz  (generous for AI TTS prefill)
-//   CALL_RING_LIMIT =  2 048 B → 128 ms @ 8 kHz   (low-latency cap for live call)
+//   CALL_RING_LIMIT =  8 192 B → 512 ms @ 8 kHz   (absorbs network jitter for live call)
 #define RING_SIZE         16384
-#define CALL_RING_LIMIT   2048
+#define CALL_RING_LIMIT   8192
 
 // ── Audio / session state ─────────────────────────────────
 static bool     call_mode    = false;  // live-call mode active
@@ -341,8 +341,17 @@ static void handle_packet(uint8_t type, uint8_t* data, uint16_t len) {
 
         case PKT_AUDIO_DATA:
             if ((streaming || call_mode) && len > 0) {
-                if (ring_free() >= len) ring_write(data, len);
-                else                   send_nack(PKT_AUDIO_DATA, 2);  // 2 = ring full
+                if (ring_free() >= len) {
+                    ring_write(data, len);
+                } else if (call_mode) {
+                    // In call mode: discard oldest audio to stay low-latency
+                    // rather than dropping new data (which causes choppy silence gaps).
+                    uint16_t need = len - ring_free();
+                    ring_tail = (ring_tail + need) % RING_SIZE;
+                    ring_write(data, len);
+                } else {
+                    send_nack(PKT_AUDIO_DATA, 2);  // 2 = ring full
+                }
             }
             break;
 

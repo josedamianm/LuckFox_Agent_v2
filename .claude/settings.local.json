@@ -9,7 +9,8 @@
       "Bash(ssh -p 8022 root@luckfoxpico1.aiserver.onmobilespace.com \"sed -i ''s/enable_cycle_snapshot = 1/enable_cycle_snapshot = 0/'' /oem/usr/share/rkipc-300w.ini && grep ''enable_cycle_snapshot'' /oem/usr/share/rkipc-300w.ini\")",
       "Bash(ssh -p 8022 root@luckfoxpico1.aiserver.onmobilespace.com \"reboot\")",
       "Bash(ssh -p 8022 root@luckfoxpico1.aiserver.onmobilespace.com \"ps aux | grep rkipc | grep -v grep\")",
-      "Bash(ssh -p 8022 root@luckfoxpico1.aiserver.onmobilespace.com \"grep ''enable_cycle_snapshot'' /userdata/rkipc.ini\")"
+      "Bash(ssh -p 8022 root@luckfoxpico1.aiserver.onmobilespace.com \"grep ''enable_cycle_snapshot'' /userdata/rkipc.ini\")",
+      "Bash(git show:*)"
     ]
   }
 }
