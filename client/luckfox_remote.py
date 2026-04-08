@@ -219,6 +219,8 @@ call command:
                         help="avfoundation audio input device index (macOS). Default: 0")
     p_call.add_argument("--volume", type=float, default=3.0,
                         help="Playback volume multiplier for board mic (default: 3.0)")
+    p_call.add_argument("--tx-volume", type=float, default=15.0,
+                        help="MacBook mic gain sent to board speaker (default: 15.0)")
 
     args = parser.parse_args()
 
@@ -438,7 +440,8 @@ def _do_call(base, args):
         sys.exit(1)
     print("Call connected. Press Ctrl-C to hang up.", file=sys.stderr)
     print(f"  Mic input device : {args.mic_device} (avfoundation index)", file=sys.stderr)
-    print(f"  Playback volume  : {args.volume}×", file=sys.stderr)
+    print(f"  RX volume (board→Mac) : {args.volume}×", file=sys.stderr)
+    print(f"  TX volume (Mac→board) : {args.tx_volume}×", file=sys.stderr)
 
     # ── Parse host / port from base URL ──────────────────────────────────────
     parsed   = urllib.parse.urlparse(base if '://' in base else f'http://{base}')
@@ -455,6 +458,7 @@ def _do_call(base, args):
          '-fflags', 'nobuffer',
          '-f', 'avfoundation', '-i', f':{args.mic_device}',
          '-ar', '8000', '-ac', '1',
+         '-af', f'volume={args.tx_volume}',
          '-fflags', '+nobuffer', '-flags', 'low_delay', '-flush_packets', '1',
          '-f', 's16le', 'pipe:1'],
         stdout=subprocess.PIPE,

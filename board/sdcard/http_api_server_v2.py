@@ -189,13 +189,36 @@ class APIHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    _tx_t0 = 0
+    _tx_sent = 0
+
+    def _send_audio_chunks(self, data):
+        """Split data into ≤512-byte UART packets, rate-limited to ~20 KB/s
+        to avoid overflowing the ESP32's 4096-byte UART RX buffer."""
+        UART_CHUNK = 512
+        BYTES_PER_SEC = 20000  # slightly above 16 KB/s audio rate
+        if self._tx_t0 == 0:
+            self.__class__._tx_t0 = time.time()
+            self.__class__._tx_sent = 0
+        for i in range(0, len(data), UART_CHUNK):
+            audio_sender.uart_write(
+                audio_sender.build_packet(audio_sender.AUDIO_DATA, data[i:i+UART_CHUNK]))
+            self.__class__._tx_sent += len(data[i:i+UART_CHUNK])
+            # Pace: sleep only if we're ahead of real-time
+            elapsed = time.time() - self.__class__._tx_t0
+            expected = self.__class__._tx_sent / BYTES_PER_SEC
+            if elapsed < expected:
+                time.sleep(expected - elapsed)
+
     def _stream_chunked_to_esp32(self):
         """
         Read chunked or plain HTTP POST body and forward each chunk to the ESP32
         speaker ring buffer via PKT_AUDIO_DATA packets.  Handles three encodings:
           - Transfer-Encoding: chunked
-          - Content-Length: N  (read in 256-byte pieces)
+          - Content-Length: N  (read in 512-byte pieces)
           - No length header    (read until connection closes)
+        Chunks from the HTTP layer may be larger than the ESP32 can handle in one
+        UART packet (MAX_PAYLOAD=1024), so _send_audio_chunks() splits them.
         """
         te = self.headers.get('Transfer-Encoding', '').lower()
         cl = self.headers.get('Content-Length', None)
@@ -218,34 +241,31 @@ class APIHandler(BaseHTTPRequestHandler):
                 chunk = self.rfile.read(size)
                 self.rfile.read(2)  # discard CRLF after chunk data
                 if chunk and _call_active:
-                    audio_sender.uart_write(
-                        audio_sender.build_packet(audio_sender.AUDIO_DATA, chunk))
+                    self._send_audio_chunks(chunk)
                     total_bytes += len(chunk)
-                    if total_bytes % 4096 == 0:
+                    if total_bytes % 8192 == 0:
                         print(f"[tx] forwarded {total_bytes} bytes")
         elif cl:
             print(f"[tx] branch=content-length ({cl} bytes)")
             total    = int(cl)
             received = 0
             while received < total and _call_active:
-                n     = min(256, total - received)
+                n     = min(512, total - received)
                 chunk = self.rfile.read(n)
                 if not chunk:
                     break
                 received += len(chunk)
-                audio_sender.uart_write(
-                    audio_sender.build_packet(audio_sender.AUDIO_DATA, chunk))
+                self._send_audio_chunks(chunk)
                 total_bytes += len(chunk)
         else:
             print("[tx] branch=raw-stream")
             while _call_active:
-                chunk = self.rfile.read1(256) if hasattr(self.rfile, 'read1') else self.rfile.read(256)
+                chunk = self.rfile.read1(512) if hasattr(self.rfile, 'read1') else self.rfile.read(512)
                 if not chunk:
                     break
-                audio_sender.uart_write(
-                    audio_sender.build_packet(audio_sender.AUDIO_DATA, chunk))
+                self._send_audio_chunks(chunk)
                 total_bytes += len(chunk)
-                if total_bytes % 4096 == 0:
+                if total_bytes % 8192 == 0:
                     print(f"[tx] forwarded {total_bytes} bytes")
 
         print(f"[tx] done, total={total_bytes} bytes")
@@ -492,6 +512,28 @@ class APIHandler(BaseHTTPRequestHandler):
                 self._json(200, {'call': 'started', 'sample_rate': sample_rate})
             else:
                 self._json(409, {'error': 'Call already active'})
+
+        elif path == '/api/audio/call/test-tone':
+            # Debug: send 2s 440Hz tone at 8kHz in call mode via same UART
+            if not _call_active:
+                self._json(400, {'error': 'Start call first'})
+                return
+            import math
+            sr, dur = 8000, 2
+            t0 = time.time()
+            sent = 0
+            for i in range(0, sr * dur, 256):
+                samples = b''.join(
+                    struct.pack('<h', int(16000 * math.sin(2 * 3.14159 * 440 * (i+j) / sr)))
+                    for j in range(256))
+                audio_sender.uart_write(
+                    audio_sender.build_packet(audio_sender.AUDIO_DATA, samples))
+                sent += len(samples)
+                target = (i + 256) / sr
+                elapsed = time.time() - t0
+                if elapsed < target:
+                    time.sleep(target - elapsed)
+            self._json(200, {'test': 'tone sent', 'bytes': sent})
 
         elif path == '/api/audio/call/stop':
             # ── Terminate live-call session ──
