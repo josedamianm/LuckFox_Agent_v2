@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 import argparse
+import http.client
 import json
 import os
 import shutil
 import signal
+import ssl
 import subprocess
 import sys
+import threading
 import urllib.request
 import urllib.error
+import urllib.parse
 
 DEFAULT_HOST = "https://luckfoxpico1.aiserver.onmobilespace.com"
 
@@ -147,6 +151,17 @@ examples:
 
   %(prog)s --host 192.168.1.60 status
   %(prog)s --host 192.168.1.60 stream
+  %(prog)s --host 192.168.1.60 call
+
+call command:
+  Opens a live bidirectional voice call with the ESP32-C3 audio device.
+  MacBook mic  → POST /api/audio/call/tx → ESP32 speaker (8 kHz s16le)
+  ESP32 mic    → GET  /api/audio/call/rx → MacBook speaker (8 kHz s16le)
+  Requires ffmpeg and ffplay installed on the client machine.
+
+  %(prog)s call                          live call (default device)
+  %(prog)s call --mic-device 1           use audio input device index 1
+  %(prog)s call --volume 5               set playback gain (default 3)
 """
     parser = argparse.ArgumentParser(
         description="LuckFox Agent V2 API Client",
@@ -198,6 +213,12 @@ examples:
     sub.add_parser("record-stop", help="GET /api/audio/record/stop — stop recording + report WAV size")
     p_dl = sub.add_parser("record-download", help="GET /api/audio/record/download — download last WAV")
     p_dl.add_argument("-o", "--output", default="recording.wav", help="Output file (default: recording.wav)")
+
+    p_call = sub.add_parser("call", help="Live bidirectional audio call with the board")
+    p_call.add_argument("--mic-device", default="0", metavar="N",
+                        help="avfoundation audio input device index (macOS). Default: 0")
+    p_call.add_argument("--volume", type=float, default=3.0,
+                        help="Playback volume multiplier for board mic (default: 3.0)")
 
     args = parser.parse_args()
 
@@ -396,5 +417,99 @@ examples:
             print(f"Download failed: {err}", file=sys.stderr)
             sys.exit(1)
 
+    elif args.command == "call":
+        _do_call(base, args)
+
 if __name__ == "__main__":
     main()
+
+
+def _do_call(base, args):
+    """Live bidirectional audio call implementation."""
+    ffplay = shutil.which("ffplay")
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffplay or not ffmpeg:
+        print("Error: both ffmpeg and ffplay are required for call mode.", file=sys.stderr)
+        print("  Install with: brew install ffmpeg", file=sys.stderr)
+        sys.exit(1)
+
+    # ── Start call session on the board ──────────────────────────────────────
+    print("Starting call...", file=sys.stderr)
+    result = api_post(base, "/api/audio/call/start", data={'sample_rate': 8000})
+    if result.get("error"):
+        print(f"Error starting call: {result['error']}", file=sys.stderr)
+        sys.exit(1)
+    print("Call connected. Press Ctrl-C to hang up.", file=sys.stderr)
+    print(f"  Mic input device : {args.mic_device} (avfoundation index)", file=sys.stderr)
+    print(f"  Playback volume  : {args.volume}×", file=sys.stderr)
+
+    # ── Parse host / port from base URL ──────────────────────────────────────
+    parsed   = urllib.parse.urlparse(base if '://' in base else f'http://{base}')
+    use_ssl  = parsed.scheme == 'https'
+    hostname = parsed.hostname
+    port     = parsed.port or (443 if use_ssl else 80)
+    tx_path  = '/api/audio/call/tx'
+    rx_url   = f"{base}/api/audio/call/rx"
+
+    # ── MacBook mic → board speaker (POST streaming) ─────────────────────────
+    # ffmpeg captures from avfoundation mic and writes raw s16le 8 kHz to stdout.
+    mic_proc = subprocess.Popen(
+        [ffmpeg,
+         '-f', 'avfoundation', '-i', f':{args.mic_device}',
+         '-ar', '8000', '-ac', '1', '-f', 's16le', 'pipe:1'],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+
+    _tx_stop = threading.Event()
+
+    def tx_thread():
+        """Stream mic PCM to board via chunked HTTP POST."""
+        try:
+            if use_ssl:
+                ctx  = ssl.create_default_context()
+                conn = http.client.HTTPSConnection(hostname, port, context=ctx, timeout=60)
+            else:
+                conn = http.client.HTTPConnection(hostname, port, timeout=60)
+            conn.connect()
+            conn.putrequest('POST', tx_path)
+            conn.putheader('Transfer-Encoding', 'chunked')
+            conn.putheader('Content-Type', 'application/octet-stream')
+            conn.endheaders()
+            while not _tx_stop.is_set():
+                chunk = mic_proc.stdout.read(256)  # 32 ms @ 8 kHz
+                if not chunk:
+                    break
+                conn.send(f'{len(chunk):x}\r\n'.encode() + chunk + b'\r\n')
+            conn.send(b'0\r\n\r\n')   # final chunk
+        except Exception as e:
+            if not _tx_stop.is_set():
+                print(f"[call/tx] error: {e}", file=sys.stderr)
+
+    tx_t = threading.Thread(target=tx_thread, daemon=True)
+    tx_t.start()
+
+    # ── Board mic → MacBook speaker (ffplay from GET /api/audio/call/rx) ─────
+    vol_af   = f"volume={args.volume}"
+    rx_proc  = subprocess.Popen(
+        [ffplay, '-nodisp',
+         '-f', 's16le', '-ar', '8000', '-ch_layout', 'mono',
+         '-af', vol_af,
+         rx_url],
+        stderr=subprocess.DEVNULL,
+    )
+
+    # ── Wait for Ctrl-C or either process to exit ─────────────────────────────
+    try:
+        rx_proc.wait()
+    except KeyboardInterrupt:
+        print("\nHanging up...", file=sys.stderr)
+    finally:
+        _tx_stop.set()
+        mic_proc.terminate()
+        rx_proc.terminate()
+        try:
+            api_post(base, "/api/audio/call/stop", data={}, timeout=5)
+        except Exception:
+            pass
+        print("Call ended.", file=sys.stderr)

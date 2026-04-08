@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import struct
 import threading
 import time
 import signal
@@ -23,27 +24,37 @@ try:
 except ImportError:
     HAS_AUDIO = False
 
-API_PORT   = 8080
-IFACE      = "eth0"
+API_PORT     = 8080
+IFACE        = "eth0"
 RKIPC_SOCKET = "/var/tmp/rkipc"
-RTSP_URL   = "rtsp://127.0.0.1/live/0"
-FFMPEG     = "/mnt/sdcard/ffmpeg"
+RTSP_URL     = "rtsp://127.0.0.1/live/0"
+FFMPEG       = "/mnt/sdcard/ffmpeg"
 
-gui = None
+gui          = None
 mic_receiver = None
 
-# ── Mic reference counting ────
-# Multiple consumers (CTRL button, HTTP record, HTTP stream) can request
-# the mic simultaneously.  We only send PKT_AUDIO_START on 0→1 and
-# PKT_AUDIO_STOP on 1→0 so the ESP32 isn't reset mid-stream.
+# ── Mic reference counting ────────────────────────────────────────────────────
+# Multiple consumers (CTRL button, HTTP record, HTTP stream) can request the mic
+# simultaneously. We only send PKT_AUDIO_START on 0→1 and PKT_AUDIO_STOP on 1→0.
 _mic_users = 0
-_mic_lock = threading.Lock()
+_mic_lock  = threading.Lock()
+
+# ── Call state ────────────────────────────────────────────────────────────────
+# A live call uses PKT_CALL_START / PKT_CALL_STOP which are separate from the
+# normal AI-pipeline PKT_AUDIO_START / PKT_AUDIO_STOP. While a call is active:
+#   - mic_acquire() / mic_release() are no-ops (call manages the mic lifecycle)
+#   - CTRL button events are suppressed (call has priority)
+_call_active = False
+_call_lock   = threading.Lock()
 
 
 def mic_acquire():
     """Increment mic user count; sends AUDIO_START only on first user."""
     global _mic_users
     with _mic_lock:
+        if _call_active:
+            print("[mic] acquire blocked: live call in progress")
+            return
         _mic_users += 1
         if _mic_users == 1:
             print("[mic] AUDIO_START (first user)")
@@ -56,12 +67,40 @@ def mic_release():
     """Decrement mic user count; sends AUDIO_STOP only when last user leaves."""
     global _mic_users
     with _mic_lock:
+        if _call_active:
+            print("[mic] release blocked: live call in progress")
+            return
         _mic_users = max(0, _mic_users - 1)
         if _mic_users == 0:
             print("[mic] AUDIO_STOP (last user)")
             audio_sender.send_audio_stop()
         else:
             print(f"[mic] release (users={_mic_users}, still active)")
+
+
+def call_acquire(sample_rate=8000):
+    """Start a live-call session. Returns True on success, False if already active."""
+    global _call_active
+    with _call_lock:
+        if _call_active:
+            return False
+        _call_active = True
+    if HAS_AUDIO:
+        audio_sender.start_call(sample_rate)
+    print(f"[call] CALL_START @ {sample_rate} Hz")
+    return True
+
+
+def call_release():
+    """End the live-call session."""
+    global _call_active
+    with _call_lock:
+        if not _call_active:
+            return
+        _call_active = False
+    if HAS_AUDIO:
+        audio_sender.stop_call()
+    print("[call] CALL_STOP")
 
 
 def get_ipv4(iface):
@@ -106,11 +145,15 @@ def capture_frame():
         return None, str(e)
 
 
-
 def on_button_event(msg):
-    name = msg.get("name")
+    name  = msg.get("name")
     state = msg.get("state")
     print(f"[btn] {name} {state}")
+
+    # Suppress CTRL button while a live call is active.
+    if _call_active:
+        print(f"[btn] {name} {state} suppressed — live call in progress")
+        return
 
     if name == "CTRL":
         if state == "pressed":
@@ -146,14 +189,61 @@ class APIHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _stream_chunked_to_esp32(self):
+        """
+        Read chunked or plain HTTP POST body and forward each chunk to the ESP32
+        speaker ring buffer via PKT_AUDIO_DATA packets.  Handles three encodings:
+          - Transfer-Encoding: chunked
+          - Content-Length: N  (read in 256-byte pieces)
+          - No length header    (read until connection closes)
+        """
+        te = self.headers.get('Transfer-Encoding', '').lower()
+        cl = self.headers.get('Content-Length', None)
+
+        if 'chunked' in te:
+            while _call_active:
+                line = self.rfile.readline().strip()
+                if not line:
+                    break
+                try:
+                    size = int(line, 16)
+                except ValueError:
+                    break
+                if size == 0:
+                    break
+                chunk = self.rfile.read(size)
+                self.rfile.read(2)  # discard CRLF after chunk data
+                if chunk and _call_active:
+                    audio_sender.uart_write(
+                        audio_sender.build_packet(audio_sender.AUDIO_DATA, chunk))
+        elif cl:
+            total    = int(cl)
+            received = 0
+            while received < total and _call_active:
+                n     = min(256, total - received)
+                chunk = self.rfile.read(n)
+                if not chunk:
+                    break
+                received += len(chunk)
+                audio_sender.uart_write(
+                    audio_sender.build_packet(audio_sender.AUDIO_DATA, chunk))
+        else:
+            while _call_active:
+                chunk = self.rfile.read(256)
+                if not chunk:
+                    break
+                audio_sender.uart_write(
+                    audio_sender.build_packet(audio_sender.AUDIO_DATA, chunk))
+
     def do_GET(self):
         path = urlparse(self.path).path.rstrip('/')
 
         if path == '/api/status':
             self._json(200, {
-                'ip': get_ipv4(IFACE),
-                'has_audio': HAS_AUDIO,
-                'agent_state': gui.state
+                'ip':          get_ipv4(IFACE),
+                'has_audio':   HAS_AUDIO,
+                'agent_state': gui.state,
+                'call_active': _call_active,
             })
 
         elif path == '/api/agent/state':
@@ -169,16 +259,16 @@ class APIHandler(BaseHTTPRequestHandler):
         elif path == '/api/camera/status':
             self._json(200, {
                 'rkipc_running': rkipc_running(),
-                'rtsp_url': RTSP_URL,
+                'rtsp_url':      RTSP_URL,
             })
 
         elif path == '/api/audio/record_status':
             if mic_receiver:
                 with mic_receiver._lock:
                     self._json(200, {
-                        'recording': mic_receiver._recording,
+                        'recording':      mic_receiver._recording,
                         'bytes_captured': len(mic_receiver._pcm_buf),
-                        'sample_rate': mic_receiver._sample_rate,
+                        'sample_rate':    mic_receiver._sample_rate,
                     })
             else:
                 self._json(503, {'error': 'MicReceiver not available'})
@@ -202,9 +292,9 @@ class APIHandler(BaseHTTPRequestHandler):
                 gui.set_state('thinking')
                 print(f"[mic] recorded {len(wav_bytes)} bytes WAV")
                 self._json(200, {
-                    'recording': False,
-                    'bytes_captured': len(wav_bytes) - 44,  # minus WAV header
-                    'wav_size': len(wav_bytes),
+                    'recording':      False,
+                    'bytes_captured': len(wav_bytes) - 44,
+                    'wav_size':       len(wav_bytes),
                 })
 
         elif path == '/api/audio/record/download':
@@ -237,37 +327,33 @@ class APIHandler(BaseHTTPRequestHandler):
                 self._json(200, {'audio': 'tone', 'freq': 440, 'duration': 2})
 
         elif path == '/api/audio/stream':
+            # ── Mic-only HTTP audio stream (AI-pipeline monitoring) ──
             if not HAS_AUDIO or not mic_receiver:
                 self._json(503, {'error': 'Audio not available'})
                 return
-            # Start mic (refcounted) and create a per-client stream queue
             mic_acquire()
             stream_q = mic_receiver.add_stream()
             self.send_response(200)
             self.send_header('Content-Type', 'application/octet-stream')
-            self.send_header('X-Audio-Format', 's16le')
-            self.send_header('X-Audio-Rate', '16000')
+            self.send_header('X-Audio-Format',   's16le')
+            self.send_header('X-Audio-Rate',     str(mic_receiver._sample_rate))
             self.send_header('X-Audio-Channels', '1')
             self.end_headers()
             print(f"[stream] client connected from {self.client_address[0]}")
             try:
-                # Batch small UART packets into larger writes to reduce
-                # HTTP overhead and improve playback continuity.
-                # Target: ~3200 bytes per write = 100ms of audio @ 16kHz mono 16-bit
-                BATCH_TARGET = 3200
+                BATCH_TARGET = 3200   # ~100 ms @ 16 kHz
                 batch = bytearray()
                 while True:
                     try:
                         chunk = stream_q.get(timeout=0.1)
                         batch.extend(chunk)
                     except Exception:
-                        pass  # timeout, check if we have a batch to send
+                        pass
                     if len(batch) >= BATCH_TARGET:
                         self.wfile.write(bytes(batch))
                         self.wfile.flush()
                         batch = bytearray()
-                    elif len(batch) > 0 and stream_q.empty():
-                        # Queue drained — flush what we have to avoid latency buildup
+                    elif batch and stream_q.empty():
                         self.wfile.write(bytes(batch))
                         self.wfile.flush()
                         batch = bytearray()
@@ -278,19 +364,64 @@ class APIHandler(BaseHTTPRequestHandler):
                 mic_release()
                 print(f"[stream] client disconnected from {self.client_address[0]}")
 
+        elif path == '/api/audio/call/rx':
+            # ── Live-call mic stream (ESP32 mic → MacBook speaker) ──
+            if not HAS_AUDIO or not mic_receiver:
+                self._json(503, {'error': 'Audio not available'})
+                return
+            if not _call_active:
+                self._json(400, {'error': 'No active call — POST /api/audio/call/start first'})
+                return
+            stream_q = mic_receiver.add_stream()
+            self.send_response(200)
+            self.send_header('Content-Type',     'application/octet-stream')
+            self.send_header('X-Audio-Format',   's16le')
+            self.send_header('X-Audio-Rate',     str(mic_receiver._sample_rate))
+            self.send_header('X-Audio-Channels', '1')
+            self.end_headers()
+            print(f"[call/rx] client connected from {self.client_address[0]}")
+            try:
+                BATCH_TARGET = 1600   # ~100 ms @ 8 kHz
+                batch = bytearray()
+                while _call_active:
+                    try:
+                        chunk = stream_q.get(timeout=0.1)
+                        batch.extend(chunk)
+                    except Exception:
+                        pass
+                    if len(batch) >= BATCH_TARGET:
+                        self.wfile.write(bytes(batch))
+                        self.wfile.flush()
+                        batch = bytearray()
+                    elif batch and stream_q.empty():
+                        self.wfile.write(bytes(batch))
+                        self.wfile.flush()
+                        batch = bytearray()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+            finally:
+                mic_receiver.remove_stream(stream_q)
+                print(f"[call/rx] client disconnected from {self.client_address[0]}")
+
+        elif path == '/api/audio/call/status':
+            self._json(200, {
+                'call_active':  _call_active,
+                'sample_rate':  mic_receiver._sample_rate if mic_receiver else 8000,
+            })
+
         else:
             self._json(404, {'error': 'Not found'})
 
     def do_POST(self):
-        path = urlparse(self.path).path.rstrip('/')
+        path   = urlparse(self.path).path.rstrip('/')
         length = int(self.headers.get('Content-Length', 0))
-        body = self.rfile.read(length) if length > 0 else b''
+        body   = self.rfile.read(length) if length > 0 else b''
 
         if path == '/api/agent/state':
             try:
-                data = json.loads(body)
+                data  = json.loads(body)
                 state = data.get('state', '')
-                text = data.get('text')
+                text  = data.get('text')
                 if state not in ('idle', 'listening', 'thinking', 'speaking', 'error'):
                     self._json(400, {'error': f'Invalid state: {state}'})
                     return
@@ -318,8 +449,8 @@ class APIHandler(BaseHTTPRequestHandler):
                 self._json(503, {'error': 'Audio module not available'})
             else:
                 try:
-                    data = json.loads(body)
-                    freq = int(data.get('freq', 440))
+                    data     = json.loads(body)
+                    freq     = int(data.get('freq', 440))
                     duration = int(data.get('duration', 3))
                     def _play_tone():
                         audio_sender.stream_test_tone(freq, duration)
@@ -327,6 +458,52 @@ class APIHandler(BaseHTTPRequestHandler):
                     self._json(200, {'audio': 'tone', 'freq': freq, 'duration': duration})
                 except Exception as e:
                     self._json(400, {'error': str(e)})
+
+        elif path == '/api/audio/call/start':
+            # ── Initiate live-call session ──
+            if not HAS_AUDIO:
+                self._json(503, {'error': 'Audio not available'})
+                return
+            sample_rate = 8000
+            try:
+                data        = json.loads(body) if body else {}
+                sample_rate = int(data.get('sample_rate', 8000))
+            except Exception:
+                pass
+            ok = call_acquire(sample_rate)
+            if ok:
+                if gui:
+                    gui.set_state('listening', 'Live Call')
+                self._json(200, {'call': 'started', 'sample_rate': sample_rate})
+            else:
+                self._json(409, {'error': 'Call already active'})
+
+        elif path == '/api/audio/call/stop':
+            # ── Terminate live-call session ──
+            call_release()
+            if gui:
+                gui.set_state('idle')
+            self._json(200, {'call': 'stopped'})
+
+        elif path == '/api/audio/call/tx':
+            # ── Live-call speaker stream (MacBook mic → ESP32 speaker) ──
+            # Long-running POST: body is raw s16le PCM at the call sample rate.
+            # Each chunk is forwarded to the ESP32 as a PKT_AUDIO_DATA packet.
+            if not HAS_AUDIO:
+                self._json(503, {'error': 'Audio not available'})
+                return
+            if not _call_active:
+                self._json(400, {'error': 'No active call — POST /api/audio/call/start first'})
+                return
+            self.send_response(200)
+            self.end_headers()
+            print(f"[call/tx] client connected from {self.client_address[0]}")
+            try:
+                self._stream_chunked_to_esp32()
+            except Exception as e:
+                print(f"[call/tx] error: {e}")
+            finally:
+                print(f"[call/tx] client disconnected from {self.client_address[0]}")
 
         else:
             self._json(404, {'error': 'Not found'})
@@ -346,6 +523,8 @@ def main():
 
     def signal_handler(sig, frame):
         print("\nShutting down...")
+        if _call_active:
+            call_release()
         gui.stop()
         sys.exit(0)
 

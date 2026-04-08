@@ -14,15 +14,17 @@ UART_BAUD    = 921600
 CHUNK_SIZE   = 512
 SYNC         = b'\xAA\x55'
 
-AUDIO_START  = 0x01
-AUDIO_DATA   = 0x02
-AUDIO_STOP   = 0x03
+AUDIO_START   = 0x01
+AUDIO_DATA    = 0x02
+AUDIO_STOP    = 0x03
 PKT_MIC_START = 0x04
 PKT_MIC_DATA  = 0x05
 PKT_MIC_STOP  = 0x06
-ACK          = 0x10
-NACK         = 0x11
-STATUS       = 0x12
+PKT_CALL_START = 0x07
+PKT_CALL_STOP  = 0x08
+ACK           = 0x10
+NACK          = 0x11
+STATUS        = 0x12
 
 try:
     import serial
@@ -119,6 +121,14 @@ def send_audio_start(sample_rate=16000, bits=16, channels=1):
 def send_audio_stop():
     uart_write(build_packet(AUDIO_STOP))
 
+def start_call(sample_rate=8000, bits=16, channels=1):
+    """Send PKT_CALL_START to put ESP32 in live-call mode (8 kHz, 128 ms ring cap)."""
+    uart_write(build_packet(PKT_CALL_START, struct.pack('<HBB', sample_rate, bits, channels)))
+
+def stop_call():
+    """Send PKT_CALL_STOP to end live-call mode."""
+    uart_write(build_packet(PKT_CALL_STOP))
+
 
 class AudioSender:
     """Thin wrapper exposing self.ser for MicReceiver to share the serial port."""
@@ -130,6 +140,12 @@ class AudioSender:
 
     def send_audio_stop(self):
         send_audio_stop()
+
+    def start_call(self, sample_rate=8000):
+        start_call(sample_rate)
+
+    def stop_call(self):
+        stop_call()
 
 
 class MicReceiver:
